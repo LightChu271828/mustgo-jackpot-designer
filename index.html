@@ -122,6 +122,16 @@
   input.odds.edited { color: var(--accent); font-weight: 600; }
   input.odds.invalid { border-color: var(--bad); color: var(--bad); background: var(--bg); }
 
+  /* Hourly aggregate. The id prefixes beat the generic zebra striping below. */
+  #aggTable td { padding: 4px 10px; }
+  #aggTable tr.inwin { background: color-mix(in srgb, var(--ok) 8%, transparent); }
+  #aggTable tr.inwin td:first-child { color: var(--text); font-weight: 600; }
+  #aggTable td.design { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+  #aggTable th.design { background: color-mix(in srgb, var(--accent) 18%, var(--bg-soft)); color: var(--text); }
+  #aggTable tr.tot { background: var(--bg-inset); }
+  #aggTable tr.tot td { font-weight: 600; color: var(--text); }
+  #aggTable tr.tot:first-of-type td { border-top: 2px solid var(--line); }
+
   .scrub { border: 1px solid var(--line); border-radius: 7px; padding: 10px 12px; background: var(--bg); }
   .scrub-top { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; font-size: 12.5px; color: var(--text-dim); margin-bottom: 8px; }
   .scrub-top b { font-size: 15px; color: var(--text); font-weight: 620; }
@@ -232,6 +242,25 @@
       <div class="cap" id="distCap"></div>
     </div>
   </div>
+
+  <h2>Hourly distribution by daily stake</h2>
+  <p>
+    The same curve read as numbers, with every preset volume side by side. Each column is one daily
+    volume and sums to 100%, because the jackpot has to go before the day closes. The highlighted
+    column is your design stake and the shaded rows are the final window.
+  </p>
+  <div class="panel">
+    <div class="panel-h">
+      <span id="aggNote"></span>
+      <button id="copyAgg">Copy for Excel</button>
+    </div>
+    <div class="panel-b" style="padding:0">
+      <div class="scroll" style="border:0;border-radius:0;max-height:none">
+        <table id="aggTable"><thead></thead><tbody></tbody></table>
+      </div>
+    </div>
+  </div>
+  <div class="cap" id="aggCap"></div>
 
   <h2>The table</h2>
   <div class="panel">
@@ -560,6 +589,28 @@ function syncInputs() {
   INPUT_FIELDS.forEach((k) => { if ($(k)) $(k).value = state[k]; });
 }
 
+/**
+ * The async clipboard API needs a focused document and a permission the browser can refuse, which a
+ * locked-down machine often does. Fall back to the legacy selection copy rather than just failing.
+ */
+async function copyText(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch { /* fall through */ }
+  const ta = document.createElement("textarea");
+  ta.value = text;
+  ta.readOnly = true;
+  ta.style.cssText = "position:fixed;top:0;left:-9999px;opacity:0";
+  document.body.appendChild(ta);
+  ta.select();
+  ta.setSelectionRange(0, text.length);
+  let ok = false;
+  try { ok = document.execCommand("copy"); } catch { ok = false; }
+  ta.remove();
+  return ok;
+}
+
 function toast(msg) {
   const t = $("toast");
   t.textContent = msg;
@@ -688,6 +739,39 @@ function render({ keepTable = false } = {}) {
     (bandOK ? " and the two solid lines are the edges of the tolerance band. All four" : ". Both") +
     " are the same table \u2014 only daily volume differs.";
 
+  // ---- the same hourly curve as numbers, every preset volume at once. Busiest first, so the
+  // columns read left-to-right in the order the jackpot resolves earlier.
+  const aggCols = [...EXPLORE_OPTIONS].sort((a, b) => b - a);
+  const aggData = aggCols.map(bucket);
+  // Only whole hours sitting entirely inside the window get shaded; the exact share is its own row.
+  const winFromHour = 24 - Math.floor(state.hours);
+  const isDesign = (s) => s === state.stake;
+  const cell = (s, text) => '<td class="num' + (isDesign(s) ? " design" : "") + '">' + text + "</td>";
+
+  $("aggTable").tHead.innerHTML = '<tr><th class="num">Hour</th>' +
+    aggCols.map((s) => '<th class="num' + (isDesign(s) ? " design" : "") + '">Stake ' +
+      (s >= 1e6 ? "$" + s / 1e6 + "M" : "$" + s / 1000 + "K") + "</th>").join("") + "</tr>";
+
+  let aggRows = "";
+  for (let h = 0; h < 24; h++) {
+    aggRows += "<tr" + (h >= winFromHour ? ' class="inwin"' : "") + '><td class="num">' + h + "</td>" +
+      aggCols.map((s, ci) => cell(s, aggData[ci][h].toFixed(2) + "%")).join("") + "</tr>";
+  }
+  // Totals below the fold: 100% is the must-go guarantee, so a short column is a broken table.
+  aggRows += '<tr class="tot"><td class="num">Total</td>' +
+    aggCols.map((s, ci) => cell(s, aggData[ci].reduce((a, b) => a + b, 0).toFixed(2) + "%")).join("") +
+    "</tr>";
+  aggRows += '<tr class="tot"><td class="num">Final ' + state.hours + "h</td>" +
+    aggCols.map((s) => cell(s, (windowShare(LEVELS, win, s) * 100).toFixed(2) + "%")).join("") +
+    "</tr>";
+  $("aggTable").tBodies[0].innerHTML = aggRows;
+
+  $("aggNote").textContent = "24 hours \u00d7 " + aggCols.length + " volumes";
+  $("aggCap").textContent =
+    "Read down a column for one volume's whole day, or across a row to see how that hour changes " +
+    "as volume rises. The final-window row is exact to the interval, so it can differ slightly " +
+    "from the shaded hours whenever the window is not a whole number of hours.";
+
   // ---- table. Rebuilding the rows while someone is typing in one would steal the caret, so the
   // odds inputs are laid out once and only the derived columns are repainted afterwards.
   const onlyWindow = $("onlyWindow").checked;
@@ -813,6 +897,17 @@ function init() {
     toast("Table rebuilt at " + money(state.stake) + " for " + state.share + "%");
   });
 
+  // Tab-separated, because this table's natural home is a spreadsheet.
+  $("copyAgg").addEventListener("click", async () => {
+    const rows = [...$("aggTable").rows];
+    const tsv = rows
+      .map((r) => [...r.cells].map((c) => c.textContent.trim()).join("\t"))
+      .join("\n");
+    toast(await copyText(tsv)
+      ? "Copied " + rows.length + " rows \u2014 paste straight into Excel"
+      : "Copy failed \u2014 the clipboard was blocked");
+  });
+
   $("exploreOpts").addEventListener("click", (e) => {
     const btn = e.target.closest(".opt");
     if (!btn) return;
@@ -821,13 +916,9 @@ function init() {
   });
 
   $("shareLink").addEventListener("click", async () => {
-    const url = location.href;
-    try {
-      await navigator.clipboard.writeText(url);
-      toast("Share link copied");
-    } catch {
-      toast("Copy failed \u2014 the link is in the address bar");
-    }
+    toast(await copyText(location.href)
+      ? "Share link copied"
+      : "Copy failed \u2014 the link is in the address bar");
   });
 
   $("download").addEventListener("click", () => {
