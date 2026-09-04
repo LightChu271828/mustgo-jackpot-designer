@@ -6,14 +6,15 @@ the browser. No build step, no server, no dependencies.
 
 ## What it does
 
-The page opens on a shipped table of 144 ten-minute intervals, tuned for $125,000 a day with 80% of
+The page opens on a shipped table of 144 ten-minute intervals, tuned for $500,000 a day with 80% of
 jackpots landing in the closing four hours. From there you can work two ways: type odds straight
 into the table to hand-tune it interval by interval, or change the design parameters and press
-**Rebuild table from these** to solve for a fresh table.
+**Rebuild table from these**, the button under the inputs, to solve for a fresh table.
 
 Rebuilding is always an explicit click, so editing a parameter never silently discards work you
-typed into the table. A pill next to the button tells you whether you are looking at the shipped
-table or a custom one.
+typed into the table. A pill in the panel header tells you whether you are looking at the shipped
+table or a custom one, and the text beside the button warns you when a rebuild would throw away
+odds you typed. At the default parameters a rebuild reproduces the shipped table exactly.
 
 Each interval carries an odds denominator, "1 in N per unit of stake", shown with thousand
 separators and accepted back the same way, so `4,008,000` and `4008000` both work. Every unit
@@ -58,9 +59,15 @@ beyond the design point you type in yourself.
 
 ## A note on the design point
 
-The band a single table can hold is roughly 2.6x wide in volume: at the shipped table, 85% share at
-about $91K a day down to 65% at about $241K. Real games swing more than that, and a launch typically
-runs several times settled volume before decaying, so a table tuned for settled conditions will
-resolve early during launch. That is a genuine limitation of using one table rather than a flaw in
-the numbers, and the honest answer is usually to pick the design point that maximises days inside
-the band, which is not always the median you expect.
+The band a single table can hold is roughly 2.65x wide in volume, and it scales with wherever you
+put the design point: at the shipped $500K table, 85% share at about $364K a day down to 65% at
+about $965K. Real games swing more than that, and a launch typically runs several times settled
+volume before decaying, so a table tuned for settled conditions will resolve early during launch.
+That is a genuine limitation of using one table rather than a flaw in the numbers, and the honest
+answer is usually to pick the design point that maximises days inside the band, which is not
+always the median you expect.
+
+One consequence of a $500K design point: the presets below $400K all sit above the band, reading
+87% to 98%, so the left half of the preset row is compressed and hard to tell apart. Those volumes
+are still worth having for a quick sanity read, but the useful exploration range for this table is
+$400K to $1M.
