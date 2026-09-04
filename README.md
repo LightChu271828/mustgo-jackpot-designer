@@ -15,10 +15,11 @@ Rebuilding is always an explicit click, so editing a parameter never silently di
 typed into the table. A pill next to the button tells you whether you are looking at the shipped
 table or a custom one.
 
-Each interval carries an odds denominator, "1 in N per unit of stake". Every unit staked is an
-independent trial, so the hit distribution is a closed form rather than a simulation, and the whole
-page recalculates instantly as you type. The final interval is 1-in-1, which is what makes the
-jackpot must-go; the page warns you if an edit breaks that.
+Each interval carries an odds denominator, "1 in N per unit of stake", shown with thousand
+separators and accepted back the same way, so `4,008,000` and `4008000` both work. Every unit
+staked is an independent trial, so the hit distribution is a closed form rather than a simulation,
+and the whole page recalculates instantly as you type. The final interval is 1-in-1, which is what
+makes the jackpot must-go; the page warns you if an edit breaks that.
 
 ## Inputs
 
@@ -27,18 +28,25 @@ jackpot must-go; the page warns you if an edit breaks that.
 | Design stake | Daily volume the table is tuned for. 1 unit = 1 dollar of stake. |
 | Target share | Share of jackpots that should land inside the closing window, at the design stake. |
 | Final window | Length of that closing window, in hours. |
-| Tolerance band | The share range you are willing to accept on any given day. |
 
-The design stake and target share only feed **Rebuild**. The final window and tolerance band are
-read-outs: they judge whatever table is currently loaded, hand-edited or not.
+The design stake and target share only feed **Rebuild**. The final window is a read-out: it judges
+whatever table is currently loaded, hand-edited or not.
+
+The acceptance band is fixed at 65–85%, so it reads as a verdict rather than being a knob to move.
+A day is fine when its final-window share lands inside that range, too late above it and too early
+below it.
 
 ## What it shows
 
-- **Hit-time distribution** — the probability the jackpot is won in each hour, at any of nine preset
-  daily volumes from $50K to $1M, overlaid against the design point and both edges of the tolerance
-  band. Volume is the only thing that moves this curve: more stake burns through the odds faster and
-  pulls the jackpot earlier in the day. Hover a preset to read its share before switching.
-- **The table itself** — every interval with its odds, per-interval hit chance and cumulative
+- **Hit-time distribution** — the probability the jackpot is won in each hour, at any of twelve
+  preset daily volumes from $50K to $1M, overlaid against the design point and the two volumes
+  where the share reaches 85% and 65%. Volume is the only thing that moves this curve: more stake
+  burns through the odds faster and pulls the jackpot earlier in the day. Hover a preset to read
+  its share before switching.
+- **Hourly distribution by daily stake** — the same curve as numbers, all twelve volumes side by
+  side. Each column is one daily volume and sums to 100%, because the jackpot has to go before the
+  day closes. Copies straight into Excel.
+- **The odds table** — every interval with its odds, per-interval hit chance and cumulative
   probability. Editable, downloadable as CSV, and resettable to the shipped table with one click.
 
 ## Sharing

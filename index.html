@@ -113,10 +113,8 @@
     width: 104px; font: inherit; font-family: var(--mono); font-size: 12.5px;
     text-align: right; padding: 3px 7px; border-radius: 4px;
     border: 1px solid transparent; background: transparent; color: var(--text);
-    font-variant-numeric: tabular-nums; -moz-appearance: textfield;
+    font-variant-numeric: tabular-nums;
   }
-  input.odds::-webkit-outer-spin-button,
-  input.odds::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
   input.odds:hover { border-color: var(--line); background: var(--bg); }
   input.odds:focus { border-color: var(--accent); background: var(--bg); outline: none; }
   input.odds.edited { color: var(--accent); font-weight: 600; }
@@ -206,14 +204,6 @@
           <input type="number" id="hours" min="0.5" max="12" step="0.5" />
           <div class="hint">Length of the closing window, in hours.</div>
         </label>
-        <label class="field">
-          <span>Tolerance band <b id="lblBand"></b></span>
-          <div style="display:flex;gap:6px">
-            <input type="number" id="bandLow" min="1" max="99" step="1" />
-            <input type="number" id="bandHigh" min="1" max="99" step="1" />
-          </div>
-          <div class="hint">A day counts as compliant when its share sits between these.</div>
-        </label>
       </div>
     </div>
   </div>
@@ -262,7 +252,7 @@
   </div>
   <div class="cap" id="aggCap"></div>
 
-  <h2>The table</h2>
+  <h2>The odds table</h2>
   <div class="panel">
     <div class="panel-h">
       <span id="tableNote"></span>
@@ -302,16 +292,19 @@
 
 const DEFAULTS = {
   stake: 125000, share: 80, hours: 4,
-  bandLow: 65, bandHigh: 85,
   exploreStake: 150000,
 };
 
 /**
- * Held constant rather than exposed. They only ever shaped the generated table, and the table is
- * now editable by hand, so leaving them adjustable would offer two ways to say the same thing.
- * They still feed "Rebuild table from these".
+ * Held constant rather than exposed. The first three only ever shaped the generated table, and the
+ * table is now editable by hand, so leaving them adjustable would offer two ways to say the same
+ * thing; they still feed "Rebuild table from these". The band is the 65-85% acceptance range the
+ * design was signed off against, so it reads a verdict rather than being a knob to move.
  */
-const FIXED = { intervals: 144, dumpShare: 0.005, earlyRamp: 30 };
+const FIXED = {
+  intervals: 144, dumpShare: 0.005, earlyRamp: 30,
+  bandLow: 65, bandHigh: 85,
+};
 
 /**
  * The shipped table: 144 ten-minute intervals tuned for $125,000 a day with 80% of jackpots
@@ -337,7 +330,10 @@ const DEFAULT_LEVELS = [
 ];
 
 /** Fixed volumes to compare the table against, in dollars of daily stake. */
-const EXPLORE_OPTIONS = [50000, 75000, 100000, 125000, 150000, 300000, 500000, 750000, 1000000];
+const EXPLORE_OPTIONS = [
+  50000, 75000, 100000, 125000, 150000, 300000,
+  400000, 500000, 600000, 750000, 800000, 1000000,
+];
 
 /* ==================================================================== maths */
 
@@ -538,11 +534,18 @@ function legend(host, items) {
 
 const $ = (id) => document.getElementById(id);
 /** State keys bound to an input element sharing the same id. */
-const INPUT_FIELDS = ["stake", "share", "hours", "bandLow", "bandHigh"];
+const INPUT_FIELDS = ["stake", "share", "hours"];
 /** Everything that travels in the share link. A hand-edited table rides along separately. */
 const FIELDS = [...INPUT_FIELDS, "exploreStake"];
 const fmt = (n, d = 0) => n.toLocaleString("en-US", { maximumFractionDigits: d, minimumFractionDigits: d });
 const money = (n) => "$" + fmt(Math.round(n));
+
+/**
+ * Odds are shown with thousand separators, which rules out a number input, so parse them back by
+ * hand. "1,234", "1234" and a pasted "1 234" all mean the same thing; anything else lands on NaN
+ * and gets flagged rather than pushed into the table.
+ */
+const parseOdds = (text) => Math.round(Number(String(text).replace(/[,\s_]/g, "")));
 
 /** Minutes into the day read as a clock duration, since 1,330 means far less than "22h 10m". */
 function hoursMinutes(totalMinutes) {
@@ -626,7 +629,7 @@ function render({ keepTable = false } = {}) {
   const minutes = 1440 / intervals;
   const win = Math.round((state.hours * 60 * intervals) / 1440);
   const targetShare = state.share / 100;
-  const bandLo = state.bandLow / 100, bandHi = state.bandHigh / 100;
+  const bandLo = FIXED.bandLow / 100, bandHi = FIXED.bandHigh / 100;
 
   // ---- guard rails, so a bad input explains itself instead of drawing nonsense
   const problems = [];
@@ -634,7 +637,6 @@ function render({ keepTable = false } = {}) {
   if (win >= intervals) problems.push("The final window covers the whole day — shorten it.");
   if (!(targetShare > 0 && targetShare < 1)) problems.push("Target share must sit between 0 and 100 percent.");
   if (!(state.stake > 0)) problems.push("Design stake must be above zero.");
-  if (bandLo >= bandHi) problems.push("The tolerance band's lower bound must be below its upper bound.");
   if (problems.length) {
     $("stats").innerHTML = `<div class="stat" style="grid-column:1/-1"><div class="l" style="color:var(--bad)">${problems.map(esc).join(" ")}</div></div>`;
     return;
@@ -657,7 +659,6 @@ function render({ keepTable = false } = {}) {
   $("lblStake").textContent = money(state.stake);
   $("lblShare").textContent = state.share + "%";
   $("lblHours").textContent = state.hours + "h";
-  $("lblBand").textContent = state.bandLow + "\u2013" + state.bandHigh + "%";
   $("tableState").innerHTML = isCustomTable()
     ? '<span class="pill warn">custom table</span>'
     : '<span class="pill">shipped table</span>';
@@ -688,11 +689,12 @@ function render({ keepTable = false } = {}) {
   const exForced = exPdf[intervals - 1];
   const exP50 = percentileMinute(exPdf, 0.5, intervals);
   const exVerdict = exShare > bandHi ? "warn" : exShare < bandLo ? "bad" : "ok";
+  // The band is fixed and no longer on screen as an input, so the verdict carries its own numbers.
   const exWord = exShare > bandHi
-    ? "above the band \u2014 drops too late"
+    ? "above " + FIXED.bandHigh + "% \u2014 drops too late"
     : exShare < bandLo
-      ? "below the band \u2014 drops too early"
-      : "inside the band";
+      ? "below " + FIXED.bandLow + "% \u2014 drops too early"
+      : "inside the " + FIXED.bandLow + "\u2013" + FIXED.bandHigh + "% band";
 
   $("exploreVal").textContent = money(exploreStake);
   $("exploreMultLbl").innerHTML = "<span class=\"pill\">" +
@@ -736,7 +738,10 @@ function render({ keepTable = false } = {}) {
   $("distNote").textContent = "exact, not simulated";
   $("distCap").textContent =
     "Bars are the stake you are exploring; the dashed line is the design stake" +
-    (bandOK ? " and the two solid lines are the edges of the tolerance band. All four" : ". Both") +
+    (bandOK
+      ? " and the two solid lines are the volumes where the final-window share reaches " +
+        FIXED.bandHigh + "% and " + FIXED.bandLow + "%. All four"
+      : ". Both") +
     " are the same table \u2014 only daily volume differs.";
 
   // ---- the same hourly curve as numbers, every preset volume at once. Busiest first, so the
@@ -795,8 +800,9 @@ function buildTableRows(intervals, minutes, win, onlyWindow) {
       '<td class="num">' + (i + 1) + '</td>' +
       '<td class="num">' + Math.round((i + 1) * minutes) + '</td>' +
       '<td class="oddscell"><div class="oddsbox"><span>1-in-</span>' +
-        '<input class="odds" type="number" min="1" step="1" data-i="' + i + '" ' +
-        'aria-label="Odds denominator for interval ' + (i + 1) + '" value="' + LEVELS[i] + '" />' +
+        '<input class="odds" type="text" inputmode="numeric" autocomplete="off" ' +
+        'spellcheck="false" data-i="' + i + '" ' +
+        'aria-label="Odds denominator for interval ' + (i + 1) + '" value="' + fmt(LEVELS[i]) + '" />' +
       '</div></td>' +
       '<td class="num pdfcell"></td><td class="num cumcell"></td></tr>';
   }
@@ -816,7 +822,8 @@ function paintTableNumbers(pdf, intervals) {
     tr.querySelector(".cumcell").textContent = (cums[i] * 100).toFixed(2) + "%";
     const input = tr.querySelector("input.odds");
     input.classList.toggle("edited", LEVELS[i] !== DEFAULT_LEVELS[i]);
-    if (document.activeElement !== input) input.value = LEVELS[i];
+    // Reformatting the field being typed in would move the caret, so it is left alone until blur.
+    if (document.activeElement !== input) input.value = fmt(LEVELS[i]);
   });
 }
 
@@ -867,7 +874,7 @@ function init() {
     const input = e.target.closest("input.odds");
     if (!input) return;
     const i = Number(input.dataset.i);
-    const value = Math.round(Number(input.value));
+    const value = parseOdds(input.value);
     if (!Number.isFinite(value) || value < 1) { input.classList.add("invalid"); return; }
     input.classList.remove("invalid");
     LEVELS[i] = value;
@@ -879,7 +886,7 @@ function init() {
     const input = e.target.closest("input.odds");
     if (!input) return;
     input.classList.remove("invalid");
-    input.value = LEVELS[Number(input.dataset.i)];
+    input.value = fmt(LEVELS[Number(input.dataset.i)]);
   }, true);
 
   $("rebuild").addEventListener("click", () => {
