@@ -1,0 +1,27 @@
+# This repository is public. Nothing but the web app belongs in it.
+# The patterns below are a safety net against commercially sensitive files
+# from the simulator project ever being copied in and committed by accident.
+
+# Live odds tables and any stake exports
+levels*.csv
+stake*.csv
+*_daily_stake.csv
+*_expected_*.csv
+*.xlsx
+*.xls
+
+# Simulator sources, build output and run logs
+src/
+out/
+bin/
+*.class
+*.jar
+*.log
+
+# Editor and OS noise
+.idea/
+.vscode/
+*.iml
+.DS_Store
+Thumbs.db
+*~
