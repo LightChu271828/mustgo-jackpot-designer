@@ -107,6 +107,23 @@
   tbody tr:nth-child(even) { background: color-mix(in srgb, var(--bg-inset) 45%, transparent); }
   .scroll { max-height: 380px; overflow: auto; border: 1px solid var(--line); border-radius: 8px; }
 
+  .panel-h button { font-size: 11.5px; padding: 3px 9px; }
+  td.oddscell { padding: 2px 10px 2px 6px; }
+  .oddsbox { display: flex; align-items: center; justify-content: flex-end; gap: 3px; }
+  .oddsbox > span { color: var(--text-faint); font-family: var(--mono); font-size: 12px; }
+  input.odds {
+    width: 104px; font: inherit; font-family: var(--mono); font-size: 12.5px;
+    text-align: right; padding: 3px 7px; border-radius: 4px;
+    border: 1px solid transparent; background: transparent; color: var(--text);
+    font-variant-numeric: tabular-nums; -moz-appearance: textfield;
+  }
+  input.odds::-webkit-outer-spin-button,
+  input.odds::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+  input.odds:hover { border-color: var(--line); background: var(--bg); }
+  input.odds:focus { border-color: var(--accent); background: var(--bg); outline: none; }
+  input.odds.edited { color: var(--accent); font-weight: 600; }
+  input.odds.invalid { border-color: var(--bad); color: var(--bad); background: var(--bg); }
+
   .scrub { border: 1px solid var(--line); border-radius: 7px; padding: 10px 12px; background: var(--bg); }
   .scrub-top { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; font-size: 12.5px; color: var(--text-dim); margin-bottom: 8px; }
   .scrub-top b { font-size: 15px; color: var(--text); font-weight: 620; }
@@ -145,8 +162,8 @@
       <h1>Daily must-go jackpot &mdash; levels designer</h1>
       <p style="margin:0">
         Builds the per-interval odds table for a jackpot that is guaranteed to drop within the day,
-        then stress-tests it against real observed daily stake. Everything runs in this page; edit
-        any input and the table is rebuilt in closed form.
+        then stress-tests it against real observed daily stake. Type odds straight into the table to
+        hand-tune it, or rebuild the whole table from the parameters. Everything runs in this page.
       </p>
     </div>
     <div class="btnrow">
@@ -160,7 +177,10 @@
   <div class="panel">
     <div class="panel-h">
       <span>Table shape</span>
-      <span id="unitNote" class="mono"></span>
+      <span style="display:flex;align-items:center;gap:9px">
+        <span id="tableState"></span>
+        <button id="rebuild">Rebuild table from these</button>
+      </span>
     </div>
     <div class="panel-b">
       <div class="controls">
@@ -178,21 +198,6 @@
           <span>Final window <b id="lblHours"></b></span>
           <input type="number" id="hours" min="0.5" max="12" step="0.5" />
           <div class="hint">Length of the closing window, in hours.</div>
-        </label>
-        <label class="field">
-          <span>Intervals per day <b id="lblIntervals"></b></span>
-          <input type="number" id="intervals" min="12" max="1440" step="1" />
-          <div class="hint" id="hintIntervals"></div>
-        </label>
-        <label class="field">
-          <span>Forced-dump share <b id="lblDump"></b></span>
-          <input type="number" id="dump" min="0.01" max="20" step="0.05" />
-          <div class="hint">Probability the closing 1-in-1 interval has to release it.</div>
-        </label>
-        <label class="field">
-          <span>Early ramp <b id="lblRamp"></b></span>
-          <input type="number" id="ramp" min="1.5" max="500" step="1" />
-          <div class="hint">How much the hit rate rises across the morning. Higher is quieter early.</div>
         </label>
         <label class="field">
           <span>Tolerance band <b id="lblBand"></b></span>
@@ -306,6 +311,7 @@
       </div>
     </div>
   </div>
+  <div id="tableHealth" style="margin-top:12px"></div>
 
   <hr />
   <p style="font-size:12px;color:var(--text-faint)">
@@ -335,10 +341,40 @@ const PROFILES = [
 ];
 
 const DEFAULTS = {
-  stake: 125000, share: 80, hours: 4, intervals: 144, dump: 0.5, ramp: 30,
+  stake: 125000, share: 80, hours: 4,
   bandLow: 65, bandHigh: 85, profile: "pooled", median: 150000, custom: "",
   exploreStake: 150000,
 };
+
+/**
+ * Held constant rather than exposed. They only ever shaped the generated table, and the table is
+ * now editable by hand, so leaving them adjustable would offer two ways to say the same thing.
+ * They still feed "Rebuild table from these".
+ */
+const FIXED = { intervals: 144, dumpShare: 0.005, earlyRamp: 30 };
+
+/**
+ * The shipped table: 144 ten-minute intervals tuned for $125,000 a day with 80% of jackpots
+ * landing in the closing four hours. This is the starting point every session opens on, and what
+ * Reset returns to. Ends at 1-in-1 so the jackpot cannot survive the day.
+ */
+const DEFAULT_LEVELS = [
+  4008000, 3895000, 3785000, 3678000, 3575000, 3474000, 3376000, 3281000, 3189000, 3099000,
+  3011000, 2927000, 2844000, 2764000, 2686000, 2610000, 2537000, 2465000, 2396000, 2328000,
+  2263000, 2199000, 2137000, 2077000, 2018000, 1961000, 1906000, 1852000, 1800000, 1750000,
+  1700000, 1652000, 1606000, 1561000, 1517000, 1474000, 1432000, 1392000, 1353000, 1315000,
+  1278000, 1242000, 1207000, 1173000, 1140000, 1107000, 1076000, 1046000, 1016000,  987800,
+   960000,  932900,  906600,  881100,  856200,  832100,  808700,  785900,  763700,  742200,
+   721300,  701000,  681200,  662000,  643400,  625300,  607600,  590500,  573900,  557700,
+   542000,  526700,  511900,  497500,  483400,  469800,  456600,  443700,  431200,  419100,
+   407300,  395800,  384600,  373800,  363300,  353000,  343100,  333400,  324000,  314900,
+   306000,  297400,  289000,  280900,  273000,  265300,  257800,  250500,  243500,  236600,
+   229900,  223500,  217200,  211000,  205100,  199300,  193700,  188200,  182900,  177800,
+   172800,  167900,  163200,  158600,  154100,  149800,  145500,  141400,  137500,  133600,
+   107300,   86170,   69210,   55590,   44640,   35860,   28800,   23130,   18580,   14920,
+    11980,    9625,    7730,    6209,    4987,    4005,    3217,    2584,    2075,    1667,
+     1339,    1075,     864,       1,
+];
 
 /** Fixed volumes to compare the table against, in dollars of daily stake. */
 const EXPLORE_OPTIONS = [50000, 75000, 100000, 150000, 300000, 500000, 750000, 1000000];
@@ -554,11 +590,18 @@ function legend(host, items) {
 
 const $ = (id) => document.getElementById(id);
 /** State keys bound to an input element sharing the same id. */
-const INPUT_FIELDS = ["stake", "share", "hours", "intervals", "dump", "ramp", "bandLow", "bandHigh", "profile", "median", "custom"];
-/** Everything that travels in the share link. */
+const INPUT_FIELDS = ["stake", "share", "hours", "bandLow", "bandHigh", "profile", "median", "custom"];
+/** Everything that travels in the share link. A hand-edited table rides along separately. */
 const FIELDS = [...INPUT_FIELDS, "exploreStake"];
 const fmt = (n, d = 0) => n.toLocaleString("en-US", { maximumFractionDigits: d, minimumFractionDigits: d });
 const money = (n) => "$" + fmt(Math.round(n));
+
+/** Minutes into the day read as a clock duration, since 1,330 means far less than "22h 10m". */
+function hoursMinutes(totalMinutes) {
+  const h = Math.floor(totalMinutes / 60);
+  const m = Math.round(totalMinutes - h * 60);
+  return m ? h + "h " + m + "m" : h + "h";
+}
 
 let state = { ...DEFAULTS };
 
@@ -574,12 +617,28 @@ function readURL() {
   return out;
 }
 
+/** Reads a hand-edited table out of the link, falling back to the shipped one. */
+function readLevelsFromURL() {
+  const h = new URLSearchParams(location.hash.replace(/^#/, ""));
+  if (!h.has("levels")) return DEFAULT_LEVELS.slice();
+  const vals = h.get("levels").split(".").map((v) => Math.round(Number(v)));
+  const usable = vals.length === FIXED.intervals &&
+    vals.every((v) => Number.isFinite(v) && v >= 1);
+  return usable ? vals : DEFAULT_LEVELS.slice();
+}
+
+function isCustomTable() {
+  return LEVELS.some((v, i) => v !== DEFAULT_LEVELS[i]);
+}
+
 function writeURL() {
   const h = new URLSearchParams();
   FIELDS.forEach((k) => {
     if (k === "custom") { if (state.custom.trim()) h.set(k, state.custom.trim()); return; }
     if (state[k] !== DEFAULTS[k]) h.set(k, state[k]);
   });
+  // Dots rather than commas: URLSearchParams would escape commas and triple the link's length.
+  if (isCustomTable()) h.set("levels", LEVELS.join("."));
   const q = h.toString();
   history.replaceState(null, "", q ? "#" + q : location.pathname);
 }
@@ -612,55 +671,53 @@ function toast(msg) {
   toast._t = setTimeout(() => t.classList.remove("on"), 1700);
 }
 
-let LEVELS = [], WINDOW = 0;
+let LEVELS = DEFAULT_LEVELS.slice(), WINDOW = 0;
 
-function render() {
-  const intervals = Math.max(12, Math.round(state.intervals));
+function render({ keepTable = false } = {}) {
+  const intervals = FIXED.intervals;
   const minutes = 1440 / intervals;
   const win = Math.round((state.hours * 60 * intervals) / 1440);
   const targetShare = state.share / 100;
-  const dumpShare = state.dump / 100;
   const bandLo = state.bandLow / 100, bandHi = state.bandHigh / 100;
 
   // ---- guard rails, so a bad input explains itself instead of drawing nonsense
   const problems = [];
-  if (win < 2) problems.push("The final window is under two intervals — raise the window length or the interval count.");
+  if (win < 2) problems.push("The final window is under two intervals — lengthen it.");
   if (win >= intervals) problems.push("The final window covers the whole day — shorten it.");
   if (!(targetShare > 0 && targetShare < 1)) problems.push("Target share must sit between 0 and 100 percent.");
-  if (!(dumpShare > 0 && dumpShare < targetShare)) problems.push("Forced-dump share must be above zero and below the target share.");
-  if (state.ramp <= 1) problems.push("Early ramp must be greater than 1.");
+  if (!(state.stake > 0)) problems.push("Design stake must be above zero.");
   if (bandLo >= bandHi) problems.push("The tolerance band's lower bound must be below its upper bound.");
   if (problems.length) {
     $("stats").innerHTML = `<div class="stat" style="grid-column:1/-1"><div class="l" style="color:var(--bad)">${problems.map(esc).join(" ")}</div></div>`;
     return;
   }
 
-  LEVELS = design({ intervals, window: win, targetShare, designStake: state.stake, dumpShare, earlyRamp: state.ramp });
   WINDOW = win;
 
   const pdf = distribution(LEVELS, state.stake);
   const achieved = windowShare(LEVELS, win, state.stake);
   const forced = pdf[intervals - 1];
   const p50 = percentileMinute(pdf, 0.5, intervals);
+
+  // A hand-edited table can be shaped so no volume ever reaches the band. Detect that instead of
+  // printing the bisection's fallback as though it were a real answer.
   const bandLoStake = stakeForShare(LEVELS, win, bandHi);
   const bandHiStake = stakeForShare(LEVELS, win, bandLo);
+  const bandOK = Number.isFinite(bandLoStake) && Number.isFinite(bandHiStake) &&
+    bandLoStake > 10 && bandHiStake > bandLoStake * 1.0001;
 
   $("lblStake").textContent = money(state.stake);
   $("lblShare").textContent = state.share + "%";
   $("lblHours").textContent = state.hours + "h";
-  $("lblIntervals").textContent = intervals;
-  $("lblDump").textContent = state.dump + "%";
-  $("lblRamp").textContent = state.ramp + "x";
   $("lblBand").textContent = state.bandLow + "\u2013" + state.bandHigh + "%";
-  $("hintIntervals").textContent = minutes.toFixed(2) + " minutes each; window = last " + win + ".";
-  $("unitNote").textContent = "1-in-" + fmt(LEVELS[0]) + "  \u2192  1-in-" + fmt(LEVELS[intervals - 2]) + "  \u2192  1-in-1";
+  $("tableState").innerHTML = isCustomTable()
+    ? '<span class="pill warn">custom table</span>'
+    : '<span class="pill">shipped table</span>';
 
   $("stats").innerHTML = [
     { v: (achieved * 100).toFixed(2) + "%", l: "Final-" + state.hours + "h share at design", cls: Math.abs(achieved - targetShare) < 0.005 ? "ok" : "warn" },
-    { v: money(bandLoStake) + " \u2013 " + money(bandHiStake), l: "Stake band holding " + state.bandLow + "\u2013" + state.bandHigh + "%" },
-    { v: (bandHiStake / bandLoStake).toFixed(2) + "x", l: "Volume swing the band allows" },
     { v: (forced * 100).toFixed(3) + "%", l: "Forced by the closing 1-in-1", cls: forced > 0.05 ? "bad" : forced > 0.02 ? "warn" : "" },
-    { v: "min " + fmt(p50), l: "Median hit time (of 1440)" },
+    { v: hoursMinutes(p50), l: "Median hit time (of 24h)" },
   ].map((s) => `<div class="stat"><div class="v ${s.cls || ""}">${esc(s.v)}</div><div class="l">${esc(s.l)}</div></div>`).join("");
 
   // ---- hourly distribution at the design point and both band edges
@@ -704,16 +761,20 @@ function render() {
   $("exploreStats").innerHTML = [
     { v: (exShare * 100).toFixed(2) + "%", l: "Share in the final " + state.hours + "h", cls: exVerdict },
     { v: (exForced * 100).toFixed(3) + "%", l: "Forced by the closing 1-in-1", cls: exForced > 0.05 ? "bad" : exForced > 0.02 ? "warn" : "" },
-    { v: "min " + fmt(exP50), l: "Median hit time" },
+    { v: hoursMinutes(exP50), l: "Median hit time" },
     { v: fmt(exploreStake / intervals, 0), l: "Stake per interval" },
   ].map((s) => `<div class="stat"><div class="v ${s.cls || ""}">${esc(s.v)}</div><div class="l">${esc(s.l)}</div></div>`).join("");
 
   const distSeries = [
     { name: "Explored \u2014 " + money(exploreStake) + "/day", data: bucket(exploreStake), color: c.accent, bars: true },
     { name: "Design \u2014 " + money(state.stake) + "/day", data: bucket(state.stake), color: c.text, dash: "4 3" },
-    { name: "Quiet edge \u2014 " + money(bandLoStake), data: bucket(bandLoStake), color: c.warn },
-    { name: "Busy edge \u2014 " + money(bandHiStake), data: bucket(bandHiStake), color: c.bad },
   ];
+  if (bandOK) {
+    distSeries.push(
+      { name: "Quiet edge \u2014 " + money(bandLoStake), data: bucket(bandLoStake), color: c.warn },
+      { name: "Busy edge \u2014 " + money(bandHiStake), data: bucket(bandHiStake), color: c.bad }
+    );
+  }
   legend($("distLegend"), distSeries);
   plot($("distChart"), {
     categories: Array.from({ length: hours }, (_, h) => String(h).padStart(2, "0")),
@@ -730,7 +791,8 @@ function render() {
     "lines are the edges of the tolerance band. All four are the same table \u2014 only daily volume differs.";
 
   // ---- sensitivity, log-spaced across the plausible volume range
-  const lo = bandLoStake / 3, hi = bandHiStake * 3;
+  const lo = bandOK ? bandLoStake / 3 : state.stake / 8;
+  const hi = bandOK ? bandHiStake * 3 : state.stake * 8;
   const pts = 40;
   const stakes = Array.from({ length: pts }, (_, i) => lo * Math.pow(hi / lo, i / (pts - 1)));
   const sensSeries = [
@@ -815,19 +877,21 @@ function render() {
   if (over > 0) {
     advice.push("<div class=\"note warn\"><b>" + over + " quiet day" + (over === 1 ? "" : "s") +
       " land above " + state.bandHigh + "%</b>, meaning the jackpot sits too long and leans on the closing intervals. " +
-      "The quietest day here is " + money(sortedDays[0]) + " against a band floor of " + money(bandLoStake) +
-      ". Lowering the design stake pulls these in.</div>");
+      "The quietest day here is " + money(sortedDays[0]) +
+      (bandOK ? " against a band floor of " + money(bandLoStake) : "") +
+      ". Easing the early odds, or rebuilding at a lower design stake, pulls these in.</div>");
   }
   if (under > 0) {
     advice.push("<div class=\"note bad\"><b>" + under + " busy day" + (under === 1 ? "" : "s") +
       " land below " + state.bandLow + "%</b>, so the jackpot resolves earlier than intended. " +
-      "The busiest day is " + money(sortedDays[sortedDays.length - 1]) + " against a band ceiling of " +
-      money(bandHiStake) + ". Raising the design stake pushes these back.</div>");
+      "The busiest day is " + money(sortedDays[sortedDays.length - 1]) +
+      (bandOK ? " against a band ceiling of " + money(bandHiStake) : "") +
+      ". Tightening the early odds, or rebuilding at a higher design stake, pushes these back.</div>");
   }
   if (maxForced > 0.05) {
     advice.push("<div class=\"note bad\"><b>Forced dumps reach " + (maxForced * 100).toFixed(1) + "% on the quietest day.</b> " +
-      "Players see that as the jackpot repeatedly dropping in the last interval. A lower design stake, " +
-      "or a smaller forced-dump share, reduces it.</div>");
+      "Players see that as the jackpot repeatedly dropping in the last interval. Shortening the odds " +
+      "in the closing intervals, or rebuilding at a lower design stake, reduces it.</div>");
   }
   if (!obs.custom && obs.profile && obs.profile.launchMult > 0) {
     const lm = obs.profile.launchMult * state.median;
@@ -838,29 +902,78 @@ function render() {
       "% then, so expect the jackpot to resolve early until volume decays.</div>");
   }
   if (!advice.length) {
-    advice.push("<div class=\"note\"><b>Every observed day is compliant.</b> The band " +
-      money(bandLoStake) + " to " + money(bandHiStake) + " covers this profile's full spread.</div>");
+    advice.push("<div class=\"note\"><b>Every observed day is compliant.</b>" +
+      (bandOK ? " The band " + money(bandLoStake) + " to " + money(bandHiStake) +
+        " covers this profile's full spread." : "") + "</div>");
   }
   $("advice").innerHTML = advice.join("");
 
-  // ---- table
+  // ---- table. Rebuilding the rows while someone is typing in one would steal the caret, so the
+  // odds inputs are laid out once and only the derived columns are repainted afterwards.
   const onlyWindow = $("onlyWindow").checked;
-  const from = onlyWindow ? intervals - win : 0;
-  let cum = 0, rows = "";
-  for (let i = 0; i < intervals; i++) {
-    cum += pdf[i];
-    if (i < from) continue;
-    rows += "<tr><td class=\"num\">" + (i + 1) + "</td><td class=\"num\">" +
-      Math.round((i + 1) * minutes) + "</td><td class=\"num\">1-in-" + fmt(LEVELS[i]) +
-      "</td><td class=\"num\">" + (pdf[i] * 100).toFixed(pdf[i] < 0.001 ? 4 : 3) +
-      "%</td><td class=\"num\">" + (cum * 100).toFixed(2) + "%</td></tr>";
-  }
-  $("levelsTable").querySelector("tbody").innerHTML = rows;
+  if (!keepTable) buildTableRows(intervals, minutes, win, onlyWindow);
+  paintTableNumbers(pdf, intervals);
+
   $("tableNote").textContent = intervals + " intervals of " + minutes.toFixed(2) +
-    " min \u00b7 ends at 1-in-1 so the jackpot is guaranteed" +
+    " min \u00b7 type any odds to hand-tune the table" +
     (onlyWindow ? " \u00b7 showing the final " + win : "");
+  $("tableHealth").innerHTML = tableWarnings(intervals).join("");
 
   writeURL();
+}
+
+/** Lays out the rows once, with the odds column as inputs the user owns. */
+function buildTableRows(intervals, minutes, win, onlyWindow) {
+  const from = onlyWindow ? intervals - win : 0;
+  let rows = "";
+  for (let i = from; i < intervals; i++) {
+    rows += '<tr data-i="' + i + '">' +
+      '<td class="num">' + (i + 1) + '</td>' +
+      '<td class="num">' + Math.round((i + 1) * minutes) + '</td>' +
+      '<td class="oddscell"><div class="oddsbox"><span>1-in-</span>' +
+        '<input class="odds" type="number" min="1" step="1" data-i="' + i + '" ' +
+        'aria-label="Odds denominator for interval ' + (i + 1) + '" value="' + LEVELS[i] + '" />' +
+      '</div></td>' +
+      '<td class="num pdfcell"></td><td class="num cumcell"></td></tr>';
+  }
+  $("levelsTable").querySelector("tbody").innerHTML = rows;
+}
+
+/** Repaints everything the odds imply, leaving the inputs themselves alone. */
+function paintTableNumbers(pdf, intervals) {
+  const cums = new Array(intervals);
+  let cum = 0;
+  for (let i = 0; i < intervals; i++) { cum += pdf[i]; cums[i] = cum; }
+
+  $("levelsTable").querySelectorAll("tbody tr").forEach((tr) => {
+    const i = Number(tr.dataset.i);
+    tr.querySelector(".pdfcell").textContent =
+      (pdf[i] * 100).toFixed(pdf[i] < 0.001 ? 4 : 3) + "%";
+    tr.querySelector(".cumcell").textContent = (cums[i] * 100).toFixed(2) + "%";
+    const input = tr.querySelector("input.odds");
+    input.classList.toggle("edited", LEVELS[i] !== DEFAULT_LEVELS[i]);
+    if (document.activeElement !== input) input.value = LEVELS[i];
+  });
+}
+
+/** Flags the two ways a hand-edited table stops behaving like a must-go jackpot. */
+function tableWarnings(intervals) {
+  const out = [];
+  if (LEVELS[intervals - 1] !== 1) {
+    out.push('<div class="note bad"><b>The last interval is not 1-in-1.</b> ' +
+      'At 1-in-' + fmt(LEVELS[intervals - 1]) + ' the jackpot can survive the whole day, so it is ' +
+      'no longer must-go. Set the final interval back to 1 to restore the guarantee.</div>');
+  }
+  let rises = 0, firstRise = -1;
+  for (let i = 1; i < intervals; i++) {
+    if (LEVELS[i] > LEVELS[i - 1]) { rises++; if (firstRise < 0) firstRise = i; }
+  }
+  if (rises > 0) {
+    out.push('<div class="note warn"><b>The odds get longer again in ' + rises + ' place' +
+      (rises === 1 ? '' : 's') + '</b>, first at interval ' + (firstRise + 1) + '. That is allowed, ' +
+      'and the maths still holds, but the hit rate dips mid-day instead of climbing steadily.</div>');
+  }
+  return out;
 }
 
 /* ---------------------------------------------------------------- wiring -- */
@@ -871,6 +984,7 @@ function init() {
   ).join("");
 
   state = readURL();
+  LEVELS = readLevelsFromURL();
   syncInputs();
 
   INPUT_FIELDS.forEach((k) => {
@@ -882,7 +996,43 @@ function init() {
       render();
     });
   });
-  $("onlyWindow").addEventListener("change", render);
+  $("onlyWindow").addEventListener("change", () => render());
+
+  // Typing an odds value edits the table in place. An unusable entry is marked and ignored rather
+  // than pushed through, so a half-typed number never blanks the charts.
+  $("levelsTable").addEventListener("input", (e) => {
+    const input = e.target.closest("input.odds");
+    if (!input) return;
+    const i = Number(input.dataset.i);
+    const value = Math.round(Number(input.value));
+    if (!Number.isFinite(value) || value < 1) { input.classList.add("invalid"); return; }
+    input.classList.remove("invalid");
+    LEVELS[i] = value;
+    render({ keepTable: true });
+  });
+
+  // Leaving a field empty or invalid restores what the table is actually using.
+  $("levelsTable").addEventListener("blur", (e) => {
+    const input = e.target.closest("input.odds");
+    if (!input) return;
+    input.classList.remove("invalid");
+    input.value = LEVELS[Number(input.dataset.i)];
+  }, true);
+
+  $("rebuild").addEventListener("click", () => {
+    const win = Math.round((state.hours * 60 * FIXED.intervals) / 1440);
+    const targetShare = state.share / 100;
+    if (!(targetShare > FIXED.dumpShare && targetShare < 1) || win < 2 || win >= FIXED.intervals) {
+      toast("Fix the parameters first \u2014 see the message above");
+      return;
+    }
+    LEVELS = design({
+      intervals: FIXED.intervals, window: win, targetShare,
+      designStake: state.stake, dumpShare: FIXED.dumpShare, earlyRamp: FIXED.earlyRamp,
+    });
+    render();
+    toast("Table rebuilt at " + money(state.stake) + " for " + state.share + "%");
+  });
 
   $("exploreOpts").addEventListener("click", (e) => {
     const btn = e.target.closest(".opt");
@@ -905,7 +1055,7 @@ function init() {
     const csv = LEVELS.join("\n") + "\n";
     const a = document.createElement("a");
     a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
-    a.download = "levels_" + Math.round(state.stake) + ".csv";
+    a.download = isCustomTable() ? "levels_custom.csv" : "levels_" + Math.round(state.stake) + ".csv";
     a.click();
     URL.revokeObjectURL(a.href);
     toast("Downloaded " + a.download);
@@ -913,13 +1063,19 @@ function init() {
 
   $("reset").addEventListener("click", () => {
     state = { ...DEFAULTS };
+    LEVELS = DEFAULT_LEVELS.slice();
     syncInputs();
     render();
-    toast("Reset to the VA design");
+    toast("Reset to the shipped table");
   });
 
-  window.addEventListener("hashchange", () => { state = readURL(); syncInputs(); render(); });
-  matchMedia("(prefers-color-scheme: dark)").addEventListener("change", render);
+  window.addEventListener("hashchange", () => {
+    state = readURL();
+    LEVELS = readLevelsFromURL();
+    syncInputs();
+    render();
+  });
+  matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => render());
 
   render();
 }
