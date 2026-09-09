@@ -130,14 +130,15 @@
   input.odds.invalid { border-color: var(--bad); color: var(--bad); background: var(--bg); }
 
   /* Hourly aggregate. The id prefixes beat the generic zebra striping below. */
-  #aggTable td { padding: 4px 10px; }
-  #aggTable tr.inwin { background: color-mix(in srgb, var(--ok) 8%, transparent); }
-  #aggTable tr.inwin td:first-child { color: var(--text); font-weight: 600; }
-  #aggTable td.design { background: color-mix(in srgb, var(--accent) 10%, transparent); }
-  #aggTable th.design { background: color-mix(in srgb, var(--accent) 18%, var(--bg-soft)); color: var(--text); }
-  #aggTable tr.tot { background: var(--bg-inset); }
-  #aggTable tr.tot td { font-weight: 600; color: var(--text); }
-  #aggTable tr.tot:first-of-type td { border-top: 2px solid var(--line); }
+  /* Shared by the hourly aggregate and the amount table: same rows, same highlights. */
+  #aggTable td, #amtTable td { padding: 4px 10px; }
+  #aggTable tr.inwin, #amtTable tr.inwin { background: color-mix(in srgb, var(--ok) 8%, transparent); }
+  #aggTable tr.inwin td:first-child, #amtTable tr.inwin td:first-child { color: var(--text); font-weight: 600; }
+  #aggTable td.design, #amtTable td.design { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+  #aggTable th.design, #amtTable th.design { background: color-mix(in srgb, var(--accent) 18%, var(--bg-soft)); color: var(--text); }
+  #aggTable tr.tot, #amtTable tr.tot { background: var(--bg-inset); }
+  #aggTable tr.tot td, #amtTable tr.tot td { font-weight: 600; color: var(--text); }
+  #aggTable tr.tot:first-of-type td, #amtTable tr.tot:first-of-type td { border-top: 2px solid var(--line); }
 
   .scrub { border: 1px solid var(--line); border-radius: 7px; padding: 10px 12px; background: var(--bg); }
   .scrub-top { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; font-size: 12.5px; color: var(--text-dim); margin-bottom: 8px; }
@@ -218,6 +219,28 @@
     </div>
   </div>
 
+  <div class="panel" style="margin-top:12px">
+    <div class="panel-h">
+      <span>Jackpot pool</span>
+      <span id="poolNote"></span>
+    </div>
+    <div class="panel-b">
+      <div class="controls">
+        <label class="field">
+          <span>Contribution <b id="lblContrib"></b></span>
+          <input type="number" id="contrib" min="0.01" max="100" step="0.01" />
+          <div class="hint">Share of every dollar staked that feeds the pool.</div>
+        </label>
+        <label class="field">
+          <span>Seed <b id="lblSeed"></b></span>
+          <input type="number" id="seed" min="0" step="100" />
+          <div class="hint">What the pool resets to after it drops.</div>
+        </label>
+      </div>
+      <div class="hint" id="poolHint" style="margin-top:11px"></div>
+    </div>
+  </div>
+
   <div class="stats" id="stats" style="margin-top:16px"></div>
 
   <h2>Hit-time distribution</h2>
@@ -262,6 +285,27 @@
   </div>
   <div class="cap" id="aggCap"></div>
 
+  <h2>Jackpot amount distribution</h2>
+  <p>
+    The pool is the seed plus everything contributed so far, so it climbs steadily through the day
+    and the amount actually won is decided by <em>when</em> the jackpot drops. That makes this the
+    hit-time curve read on a money axis rather than a new piece of maths.
+  </p>
+  <div class="stats" id="poolStats" style="margin-bottom:16px"></div>
+  <div class="panel">
+    <div class="panel-h">
+      <span id="amtNote"></span>
+      <button id="copyAmt">Copy for Excel</button>
+    </div>
+    <div class="panel-b" style="padding:0">
+      <div class="scroll" style="border:0;border-radius:0;max-height:none">
+        <table id="amtTable"><thead></thead><tbody></tbody></table>
+      </div>
+    </div>
+  </div>
+  <div class="cap" id="amtCap"></div>
+  <div id="poolHealth" style="margin-top:12px"></div>
+
   <h2>The odds table</h2>
   <div class="panel">
     <div class="panel-h">
@@ -305,6 +349,7 @@ const DEFAULTS = {
   // Opens one preset above the design point, so the chart shows a comparison rather than two
   // identical curves. 600K is exactly 1.20x design, the same ratio the page shipped with before.
   exploreStake: 600000,
+  contrib: 3, seed: 1000,
 };
 
 /**
@@ -435,6 +480,63 @@ function stakeForShare(levels, window, target) {
   return Math.sqrt(lo * hi);
 }
 
+/**
+ * What is on offer if the jackpot drops in interval `i`: the seed plus every contribution taken
+ * since the last drop. Stake is spread evenly, so the pool climbs linearly across the day and the
+ * amount won is a straight relabelling of the hit time.
+ */
+function poolAt(i, intervals, dailyStake, seed, rate) {
+  return seed + rate * dailyStake * (i + 1) / intervals;
+}
+
+/** Expected amount paid out, i.e. the pool weighted by where the jackpot actually lands. */
+function poolMean(pdf, intervals, dailyStake, seed, rate) {
+  let sum = 0;
+  for (let i = 0; i < pdf.length; i++) sum += pdf[i] * poolAt(i, intervals, dailyStake, seed, rate);
+  return sum;
+}
+
+/** The pool is monotone in time, so an amount percentile is the pool at the hit-time percentile. */
+function poolPercentile(pdf, p, intervals, dailyStake, seed, rate) {
+  let cum = 0;
+  for (let i = 0; i < pdf.length; i++) {
+    cum += pdf[i];
+    if (cum >= p) return poolAt(i, intervals, dailyStake, seed, rate);
+  }
+  return poolAt(intervals - 1, intervals, dailyStake, seed, rate);
+}
+
+/**
+ * Chance the jackpot drops before contributions have paid back the seed. Those are the days the
+ * operator funds out of pocket, so it is the one number that decides whether a seed is affordable.
+ */
+function shareBeforeSeedCovered(pdf, intervals, dailyStake, seed, rate) {
+  if (!(seed > 0)) return 0;
+  const stakeNeeded = seed / rate;
+  if (stakeNeeded >= dailyStake) return 1;             // never recovered within the day
+  const perInterval = dailyStake / intervals;
+  const covered = Math.ceil(stakeNeeded / perInterval); // first interval that clears the seed
+  let cum = 0;
+  for (let i = 0; i < Math.min(covered - 1, pdf.length); i++) cum += pdf[i];
+  return cum;
+}
+
+/**
+ * Daily stake at which contributions taken after a drop exactly cover the next seed. Margin rises
+ * with volume on both counts - more contributed, and an earlier drop leaves more behind - so a
+ * plain bisection is safe. Returns null when the answer is outside the bracket.
+ */
+function breakEvenStake(levels, intervals, seed, rate) {
+  const margin = (v) => rate * v - poolMean(distribution(levels, v), intervals, v, seed, rate);
+  let lo = 1000, hi = 50000000;
+  if (margin(lo) >= 0 || margin(hi) <= 0) return null;
+  for (let k = 0; k < 50; k++) {
+    const mid = (lo + hi) / 2;
+    if (margin(mid) < 0) lo = mid; else hi = mid;
+  }
+  return hi;
+}
+
 function percentileMinute(pdf, p, intervals) {
   let cum = 0;
   for (let i = 0; i < pdf.length; i++) {
@@ -547,7 +649,7 @@ function legend(host, items) {
 
 const $ = (id) => document.getElementById(id);
 /** State keys bound to an input element sharing the same id. */
-const INPUT_FIELDS = ["stake", "share", "hours"];
+const INPUT_FIELDS = ["stake", "share", "hours", "contrib", "seed"];
 /** Everything that travels in the share link. A hand-edited table rides along separately. */
 const FIELDS = [...INPUT_FIELDS, "exploreStake"];
 const fmt = (n, d = 0) => n.toLocaleString("en-US", { maximumFractionDigits: d, minimumFractionDigits: d });
@@ -650,6 +752,8 @@ function render({ keepTable = false } = {}) {
   if (win >= intervals) problems.push("The final window covers the whole day — shorten it.");
   if (!(targetShare > 0 && targetShare < 1)) problems.push("Target share must sit between 0 and 100 percent.");
   if (!(state.stake > 0)) problems.push("Design stake must be above zero.");
+  if (!(state.contrib > 0)) problems.push("Contribution must be above zero.");
+  if (!(state.seed >= 0)) problems.push("Seed cannot be negative.");
   if (problems.length) {
     $("stats").innerHTML = `<div class="stat" style="grid-column:1/-1"><div class="l" style="color:var(--bad)">${problems.map(esc).join(" ")}</div></div>`;
     return;
@@ -794,6 +898,120 @@ function render({ keepTable = false } = {}) {
     "as volume rises. The final-window row is exact to the interval, so it can differ slightly " +
     "from the shaded hours whenever the window is not a whole number of hours.";
 
+  // ---- the pool. Amount won is the seed plus contributions banked by the hit, so this whole
+  // section is the hit-time curve relabelled in dollars; no second model is involved.
+  const rate = state.contrib / 100, seed = state.seed;
+  const pool = (i, s) => poolAt(i, intervals, s, seed, rate);
+  const dayEnd = pool(intervals - 1, state.stake);
+  const meanPool = poolMean(pdf, intervals, state.stake, seed, rate);
+  const medPool = poolPercentile(pdf, 0.5, intervals, state.stake, seed, rate);
+  const earlyDrop = shareBeforeSeedCovered(pdf, intervals, state.stake, seed, rate);
+  // Contributions taken after a drop bankroll the next seed, so this is the per-drop margin.
+  const netPerDrop = rate * state.stake - meanPool;
+  const stakeForSeed = rate > 0 ? seed / rate : Infinity;
+  const breakEven = breakEvenStake(LEVELS, intervals, seed, rate);
+
+  $("lblContrib").textContent = state.contrib + "%";
+  $("lblSeed").textContent = money(seed);
+  $("poolNote").textContent = "$" + fmt(rate, 2) + " of every $1 staked";
+  $("poolHint").textContent =
+    "At " + money(state.stake) + " a day the pool takes " + money(rate * state.stake) +
+    " in contributions, so it runs from " + money(seed + rate * state.stake / intervals) +
+    " just after a reset to " + money(dayEnd) + " if it survives to midnight. Covering the " +
+    money(seed) + " seed takes " + money(stakeForSeed) + " of stake, reached about " +
+    hoursMinutes(Math.min(1440, (stakeForSeed / state.stake) * 1440)) + " into the day.";
+
+  $("poolStats").innerHTML = [
+    { v: money(dayEnd), l: "Pool at midnight, if it lasts" },
+    { v: money(meanPool), l: "Expected payout" },
+    { v: money(medPool), l: "Median payout" },
+    { v: (earlyDrop * 100).toFixed(2) + "%", l: "Drops before the seed is covered",
+      cls: earlyDrop > 0.05 ? "bad" : earlyDrop > 0.01 ? "warn" : "ok" },
+    { v: (netPerDrop >= 0 ? "+" : "\u2212") + money(Math.abs(netPerDrop)), l: "Margin per drop",
+      cls: netPerDrop < 0 ? "bad" : "ok" },
+    { v: breakEven ? money(breakEven) : "\u2014", l: "Break-even daily stake",
+      cls: breakEven && breakEven > state.stake ? "bad" : "ok" },
+  ].map((s) => `<div class="stat"><div class="v ${s.cls || ""}">${esc(s.v)}</div><div class="l">${esc(s.l)}</div></div>`).join("");
+
+  // Two volumes side by side, because the pool on offer moves with volume even though the odds
+  // never change: a busy day drops earlier, so it pays a smaller pool.
+  const amtCols = [
+    { label: "Design \u2014 " + money(state.stake), stake: state.stake, pdf, design: true },
+    { label: "Explored \u2014 " + money(exploreStake), stake: exploreStake, pdf: exPdf, design: false },
+  ];
+  $("amtTable").tHead.innerHTML = '<tr><th class="num" rowspan="2">Hour</th>' +
+    amtCols.map((c) => '<th class="num' + (c.design ? " design" : "") +
+      '" colspan="3">' + esc(c.label) + "/day</th>").join("") + "</tr><tr>" +
+    amtCols.map((c) => {
+      const k = c.design ? ' class="num design"' : ' class="num"';
+      return "<th" + k + ">Pool</th><th" + k + ">Hit</th><th" + k + ">Cumul</th>";
+    }).join("") + "</tr>";
+
+  const perHourAmt = intervals / 24;
+  let amtRows = "";
+  const cums = amtCols.map(() => 0);
+  for (let h = 0; h < 24; h++) {
+    const last = Math.round((h + 1) * perHourAmt) - 1;
+    let cells = "";
+    amtCols.forEach((c, ci) => {
+      let hit = 0;
+      for (let i = Math.round(h * perHourAmt); i <= last; i++) hit += c.pdf[i] || 0;
+      cums[ci] += hit;
+      const k = 'class="num' + (c.design ? " design" : "") + '"';
+      cells += "<td " + k + ">" + money(pool(last, c.stake)) + "</td>" +
+        "<td " + k + ">" + (hit * 100).toFixed(2) + "%</td>" +
+        "<td " + k + ">" + (cums[ci] * 100).toFixed(2) + "%</td>";
+    });
+    amtRows += "<tr" + (h >= winFromHour ? ' class="inwin"' : "") +
+      '><td class="num">' + h + "</td>" + cells + "</tr>";
+  }
+  // Summary rows, so the spread is readable without squinting at 24 lines of cumulative.
+  const summary = [
+    ["Mean", (c) => poolMean(c.pdf, intervals, c.stake, seed, rate)],
+    ["Median", (c) => poolPercentile(c.pdf, 0.5, intervals, c.stake, seed, rate)],
+    ["P10", (c) => poolPercentile(c.pdf, 0.1, intervals, c.stake, seed, rate)],
+    ["P90", (c) => poolPercentile(c.pdf, 0.9, intervals, c.stake, seed, rate)],
+  ];
+  for (const [label, fn] of summary) {
+    // The figure is a pool amount, so it sits under Pool rather than spanning across to Cumul.
+    amtRows += '<tr class="tot"><td class="num">' + label + "</td>" +
+      amtCols.map((c) => {
+        const k = 'class="num' + (c.design ? " design" : "") + '"';
+        return "<td " + k + ">" + money(fn(c)) + "</td><td " + k + "></td><td " + k + "></td>";
+      }).join("") + "</tr>";
+  }
+  $("amtTable").tBodies[0].innerHTML = amtRows;
+
+  $("amtNote").textContent = "seed " + money(seed) + " + " + state.contrib + "% of stake";
+  $("amtCap").textContent =
+    "Pool is what would be won if the jackpot dropped by the end of that hour, so it is the top " +
+    "of that hour's range. Hit and Cumul are the same probabilities as the table above, repeated " +
+    "here so the amount and its likelihood can be read on one line. Shaded rows are the final " +
+    "window, where most of the probability sits and the pool is at its largest.";
+
+  // The pool only self-funds above a certain volume: a drop leaves behind whatever was contributed
+  // after it, and that remainder has to pay for the next seed.
+  const poolWarn = [];
+  if (netPerDrop < 0) {
+    poolWarn.push('<div class="note bad"><b>The pool loses ' + money(-netPerDrop) +
+      ' per drop at ' + money(state.stake) + ' a day.</b> Contributions banked after a hit are ' +
+      'what bankroll the next seed, and here they fall short. It only breaks even from ' +
+      (breakEven ? money(breakEven) : "a much higher volume") + ' a day, so either lift the ' +
+      'contribution to ' + fmt(100 * rate * seed / (seed + netPerDrop), 2) +
+      '%, cut the seed to ' + money(Math.max(0, seed + netPerDrop)) + ', or budget the gap.</div>');
+  } else if (breakEven) {
+    poolWarn.push('<div class="note"><b>The pool self-funds above ' + money(breakEven) +
+      ' a day.</b> At the ' + money(state.stake) + ' design point it clears that by ' +
+      money(state.stake - breakEven) + ', leaving ' + money(netPerDrop) +
+      ' per drop towards the next seed. Quiet days below the line run at a loss.</div>');
+  }
+  if (earlyDrop > 0.01) {
+    poolWarn.push('<div class="note warn"><b>' + (earlyDrop * 100).toFixed(1) +
+      '% of days drop before the seed is paid back.</b> Those days pay out more than they ' +
+      'collected, which is survivable on average but shows up as day-to-day swing.</div>');
+  }
+  $("poolHealth").innerHTML = poolWarn.join("");
+
   // ---- table. Rebuilding the rows while someone is typing in one would steal the caret, so the
   // odds inputs are laid out once and only the derived columns are repainted afterwards.
   const onlyWindow = $("onlyWindow").checked;
@@ -924,6 +1142,16 @@ function init() {
   // Tab-separated, because this table's natural home is a spreadsheet.
   $("copyAgg").addEventListener("click", async () => {
     const rows = [...$("aggTable").rows];
+    const tsv = rows
+      .map((r) => [...r.cells].map((c) => c.textContent.trim()).join("\t"))
+      .join("\n");
+    toast(await copyText(tsv)
+      ? "Copied " + rows.length + " rows \u2014 paste straight into Excel"
+      : "Copy failed \u2014 the clipboard was blocked");
+  });
+
+  $("copyAmt").addEventListener("click", async () => {
+    const rows = [...$("amtTable").rows];
     const tsv = rows
       .map((r) => [...r.cells].map((c) => c.textContent.trim()).join("\t"))
       .join("\n");

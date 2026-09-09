@@ -29,9 +29,12 @@ makes the jackpot must-go; the page warns you if an edit breaks that.
 | Design stake | Daily volume the table is tuned for. 1 unit = 1 dollar of stake. |
 | Target share | Share of jackpots that should land inside the closing window, at the design stake. |
 | Final window | Length of that closing window, in hours. |
+| Contribution | Share of every dollar staked that feeds the pool. Ships at 3%. |
+| Seed | What the pool resets to after it drops. Ships at $1,000. |
 
 The design stake and target share only feed **Rebuild**. The final window is a read-out: it judges
-whatever table is currently loaded, hand-edited or not.
+whatever table is currently loaded, hand-edited or not. Contribution and seed never touch the odds
+at all; they only decide what the pool is worth when it drops.
 
 The acceptance band is fixed at 65–85%, so it reads as a verdict rather than being a knob to move.
 A day is fine when its final-window share lands inside that range, too late above it and too early
@@ -47,6 +50,10 @@ below it.
 - **Hourly distribution by daily stake** — the same curve as numbers, all twelve volumes side by
   side. Each column is one daily volume and sums to 100%, because the jackpot has to go before the
   day closes. Copies straight into Excel.
+- **Jackpot amount distribution** — what the pool is actually worth when it drops. The pool is the
+  seed plus everything contributed so far, so it climbs linearly through the day and the amount won
+  is the hit-time curve read on a money axis. Shown hour by hour at both the design and explored
+  volumes, with mean, median, P10 and P90 underneath. Copies straight into Excel.
 - **The odds table** — every interval with its odds, per-interval hit chance and cumulative
   probability. Editable, downloadable as CSV, and resettable to the shipped table with one click.
 
@@ -71,3 +78,12 @@ One consequence of a $500K design point: the presets below $400K all sit above t
 87% to 98%, so the left half of the preset row is compressed and hard to tell apart. Those volumes
 are still worth having for a quick sanity read, but the useful exploration range for this table is
 $400K to $1M.
+
+## A note on the seed
+
+A drop never takes the whole day's contributions, only what was banked by the time it landed. What
+comes in after the drop is what pays for the next seed, which gives a break-even volume: below it
+the pool costs more to seed than it earns, above it the seed funds itself. At 3% and a $1,000 seed
+that line sits near $327K a day, so the shipped $500K design point clears it by a comfortable
+margin but a $150K day does not — it runs about $737 short per drop. The page computes the line for
+whatever contribution and seed you enter and says so plainly when the configuration is underwater.
