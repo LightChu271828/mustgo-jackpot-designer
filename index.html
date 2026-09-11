@@ -83,6 +83,7 @@
     background: var(--bg); color: var(--text);
   }
   .hint { font-size: 11px; color: var(--text-faint); margin-top: 3px; }
+  .hint b { color: var(--text); font-weight: 600; }
 
   /* Rebuilding is the one destructive action on the page, so it sits under the inputs it reads
      rather than in the header, and is sized to be found without being hunted for. */
@@ -130,7 +131,11 @@
   input.odds.invalid { border-color: var(--bad); color: var(--bad); background: var(--bg); }
 
   /* Hourly aggregate. The id prefixes beat the generic zebra striping below. */
-  /* Shared by the hourly aggregate and the amount table: same rows, same highlights. */
+  /* Shared by the hourly aggregate and the amount table: same rows, same highlights. Fixed layout
+     so the two grids line up column for column even though one holds percentages and the other
+     dollar amounts, which auto layout would otherwise size differently. */
+  #aggTable, #amtTable { table-layout: fixed; }
+  #aggTable th:first-child, #amtTable th:first-child { width: 72px; }
   #aggTable td, #amtTable td { padding: 4px 10px; }
   #aggTable tr.inwin, #amtTable tr.inwin { background: color-mix(in srgb, var(--ok) 8%, transparent); }
   #aggTable tr.inwin td:first-child, #amtTable tr.inwin td:first-child { color: var(--text); font-weight: 600; }
@@ -292,6 +297,16 @@
     hit-time curve read on a money axis rather than a new piece of maths.
   </p>
   <div class="stats" id="poolStats" style="margin-bottom:16px"></div>
+  <div class="panel" style="margin-bottom:12px">
+    <div class="panel-h">
+      <span>Probability the jackpot is won for each amount</span><span id="amtChartNote"></span>
+    </div>
+    <div class="panel-b">
+      <div class="legend" id="amtLegend"></div>
+      <div id="amtChart"></div>
+      <div class="cap" id="amtChartCap"></div>
+    </div>
+  </div>
   <div class="panel">
     <div class="panel-h">
       <span id="amtNote"></span>
@@ -655,6 +670,14 @@ const FIELDS = [...INPUT_FIELDS, "exploreStake"];
 const fmt = (n, d = 0) => n.toLocaleString("en-US", { maximumFractionDigits: d, minimumFractionDigits: d });
 const money = (n) => "$" + fmt(Math.round(n));
 
+/** Money for a crowded axis, where "$28,458" would collide with its neighbours. */
+function shortMoney(n) {
+  if (n >= 1e6) return "$" + (n / 1e6).toFixed(1) + "M";
+  if (n >= 1e4) return "$" + Math.round(n / 1000) + "K";
+  if (n >= 1000) return "$" + (n / 1000).toFixed(1) + "K";
+  return "$" + Math.round(n);
+}
+
 /**
  * Odds are shown with thousand separators, which rules out a number input, so parse them back by
  * hand. "1,234", "1234" and a pasted "1 234" all mean the same thing; anything else lands on NaN
@@ -914,12 +937,12 @@ function render({ keepTable = false } = {}) {
   $("lblContrib").textContent = state.contrib + "%";
   $("lblSeed").textContent = money(seed);
   $("poolNote").textContent = "$" + fmt(rate, 2) + " of every $1 staked";
-  $("poolHint").textContent =
+  $("poolHint").innerHTML =
     "At " + money(state.stake) + " a day the pool takes " + money(rate * state.stake) +
-    " in contributions, so it runs from " + money(seed + rate * state.stake / intervals) +
-    " just after a reset to " + money(dayEnd) + " if it survives to midnight. Covering the " +
-    money(seed) + " seed takes " + money(stakeForSeed) + " of stake, reached about " +
-    hoursMinutes(Math.min(1440, (stakeForSeed / state.stake) * 1440)) + " into the day.";
+    " in contributions, so the amount won runs from a minimum of " +
+    money(seed + rate * state.stake / intervals) + " to a maximum of " + money(dayEnd) +
+    ". <b>Covering the " + money(seed) + " seed takes " + money(stakeForSeed) +
+    " of stake.</b>";
 
   $("poolStats").innerHTML = [
     { v: money(dayEnd), l: "Pool at midnight, if it lasts" },
@@ -933,61 +956,83 @@ function render({ keepTable = false } = {}) {
       cls: breakEven && breakEven > state.stake ? "bad" : "ok" },
   ].map((s) => `<div class="stat"><div class="v ${s.cls || ""}">${esc(s.v)}</div><div class="l">${esc(s.l)}</div></div>`).join("");
 
-  // Two volumes side by side, because the pool on offer moves with volume even though the odds
-  // never change: a busy day drops earlier, so it pays a smaller pool.
-  const amtCols = [
-    { label: "Design \u2014 " + money(state.stake), stake: state.stake, pdf, design: true },
-    { label: "Explored \u2014 " + money(exploreStake), stake: exploreStake, pdf: exPdf, design: false },
+  // The same four volumes as the hit-time chart, driven by the same buttons, but plotted on a
+  // shared money axis instead of a clock. Each volume runs the identical odds table, so the
+  // spikes land in different places purely because a busy day banks more before it drops.
+  const amtVolumes = [
+    { name: "Explored \u2014 " + money(exploreStake) + "/day", stake: exploreStake, color: c.ok, bars: true },
+    { name: "Design \u2014 " + money(state.stake) + "/day", stake: state.stake, color: c.text, dash: "4 3" },
   ];
-  $("amtTable").tHead.innerHTML = '<tr><th class="num" rowspan="2">Hour</th>' +
-    amtCols.map((c) => '<th class="num' + (c.design ? " design" : "") +
-      '" colspan="3">' + esc(c.label) + "/day</th>").join("") + "</tr><tr>" +
-    amtCols.map((c) => {
-      const k = c.design ? ' class="num design"' : ' class="num"';
-      return "<th" + k + ">Pool</th><th" + k + ">Hit</th><th" + k + ">Cumul</th>";
-    }).join("") + "</tr>";
+  if (bandOK) {
+    amtVolumes.push(
+      { name: "Quiet edge \u2014 " + money(bandLoStake), stake: bandLoStake, color: c.warn },
+      { name: "Busy edge \u2014 " + money(bandHiStake), stake: bandHiStake, color: c.bad }
+    );
+  }
+  const AMT_BUCKETS = 24;
+  const amtStep = Math.max(...amtVolumes.map((v) => pool(intervals - 1, v.stake))) / AMT_BUCKETS;
+  /** Probability mass landing in each money bucket, for one daily volume. */
+  const moneyBucket = (stake) => {
+    const out = new Array(AMT_BUCKETS).fill(0);
+    const d = distribution(LEVELS, stake);
+    for (let i = 0; i < d.length; i++) {
+      out[Math.min(AMT_BUCKETS - 1, Math.floor(pool(i, stake) / amtStep))] += d[i] * 100;
+    }
+    return out;
+  };
+  const amtSeries = amtVolumes.map((v) => ({ ...v, data: moneyBucket(v.stake) }));
+  legend($("amtLegend"), amtSeries);
+  plot($("amtChart"), {
+    categories: Array.from({ length: AMT_BUCKETS }, (_, b) => shortMoney((b + 1) * amtStep)),
+    series: amtSeries,
+    xLabel: "Jackpot amount won",
+    yLabel: "Hit probability (%)",
+    yFmt: (v) => v.toFixed(0) + "%",
+    height: 260,
+    xTicks: 12,
+  });
+  $("amtChartNote").textContent = "follows the stake buttons above";
+  $("amtChartCap").textContent =
+    "Bars are the stake you are exploring; the dashed line is the design stake" +
+    (bandOK ? " and the two solid lines are the quiet and busy edges of the band" : "") +
+    ". Every volume runs the same odds table, so the curves differ only because a busier day " +
+    "banks more contributions before the jackpot drops. Each spike is narrow because most " +
+    "jackpots land in the closing hours, by which point the pool is nearly full.";
+
+  // Same grid as the hourly table above - busiest first, design column highlighted - so the two
+  // can be read together: that one gives the odds of each hour, this one gives the money.
+  const amtPdfs = aggCols.map((s) => distribution(LEVELS, s));
+
+  $("amtTable").tHead.innerHTML = '<tr><th class="num">Hour</th>' +
+    aggCols.map((s) => '<th class="num' + (isDesign(s) ? " design" : "") + '">Stake ' +
+      (s >= 1e6 ? "$" + s / 1e6 + "M" : "$" + s / 1000 + "K") + "</th>").join("") + "</tr>";
 
   const perHourAmt = intervals / 24;
   let amtRows = "";
-  const cums = amtCols.map(() => 0);
   for (let h = 0; h < 24; h++) {
     const last = Math.round((h + 1) * perHourAmt) - 1;
-    let cells = "";
-    amtCols.forEach((c, ci) => {
-      let hit = 0;
-      for (let i = Math.round(h * perHourAmt); i <= last; i++) hit += c.pdf[i] || 0;
-      cums[ci] += hit;
-      const k = 'class="num' + (c.design ? " design" : "") + '"';
-      cells += "<td " + k + ">" + money(pool(last, c.stake)) + "</td>" +
-        "<td " + k + ">" + (hit * 100).toFixed(2) + "%</td>" +
-        "<td " + k + ">" + (cums[ci] * 100).toFixed(2) + "%</td>";
-    });
-    amtRows += "<tr" + (h >= winFromHour ? ' class="inwin"' : "") +
-      '><td class="num">' + h + "</td>" + cells + "</tr>";
+    amtRows += "<tr" + (h >= winFromHour ? ' class="inwin"' : "") + '><td class="num">' + h + "</td>" +
+      aggCols.map((s) => cell(s, money(pool(last, s)))).join("") + "</tr>";
   }
-  // Summary rows, so the spread is readable without squinting at 24 lines of cumulative.
+  // Summary rows, so the spread is readable without reading 24 lines per column.
   const summary = [
-    ["Mean", (c) => poolMean(c.pdf, intervals, c.stake, seed, rate)],
-    ["Median", (c) => poolPercentile(c.pdf, 0.5, intervals, c.stake, seed, rate)],
-    ["P10", (c) => poolPercentile(c.pdf, 0.1, intervals, c.stake, seed, rate)],
-    ["P90", (c) => poolPercentile(c.pdf, 0.9, intervals, c.stake, seed, rate)],
+    ["Mean", (s, d) => poolMean(d, intervals, s, seed, rate)],
+    ["Median", (s, d) => poolPercentile(d, 0.5, intervals, s, seed, rate)],
+    ["P10", (s, d) => poolPercentile(d, 0.1, intervals, s, seed, rate)],
+    ["P90", (s, d) => poolPercentile(d, 0.9, intervals, s, seed, rate)],
   ];
   for (const [label, fn] of summary) {
-    // The figure is a pool amount, so it sits under Pool rather than spanning across to Cumul.
     amtRows += '<tr class="tot"><td class="num">' + label + "</td>" +
-      amtCols.map((c) => {
-        const k = 'class="num' + (c.design ? " design" : "") + '"';
-        return "<td " + k + ">" + money(fn(c)) + "</td><td " + k + "></td><td " + k + "></td>";
-      }).join("") + "</tr>";
+      aggCols.map((s, ci) => cell(s, money(fn(s, amtPdfs[ci])))).join("") + "</tr>";
   }
   $("amtTable").tBodies[0].innerHTML = amtRows;
 
   $("amtNote").textContent = "seed " + money(seed) + " + " + state.contrib + "% of stake";
   $("amtCap").textContent =
-    "Pool is what would be won if the jackpot dropped by the end of that hour, so it is the top " +
-    "of that hour's range. Hit and Cumul are the same probabilities as the table above, repeated " +
-    "here so the amount and its likelihood can be read on one line. Shaded rows are the final " +
-    "window, where most of the probability sits and the pool is at its largest.";
+    "Each figure is the pool if the jackpot drops by the end of that hour, so it is the top of " +
+    "that hour's range. Read down a column for one volume's day, or across a row to see how much " +
+    "more a busy day has banked by the same hour. How likely each hour is sits in the table " +
+    "above; this one is only about the money.";
 
   // The pool only self-funds above a certain volume: a drop leaves behind whatever was contributed
   // after it, and that remainder has to pay for the next seed.

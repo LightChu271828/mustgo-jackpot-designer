@@ -52,8 +52,11 @@ below it.
   day closes. Copies straight into Excel.
 - **Jackpot amount distribution** — what the pool is actually worth when it drops. The pool is the
   seed plus everything contributed so far, so it climbs linearly through the day and the amount won
-  is the hit-time curve read on a money axis. Shown hour by hour at both the design and explored
-  volumes, with mean, median, P10 and P90 underneath. Copies straight into Excel.
+  is the hit-time curve read on a money axis. Plotted first on a shared money axis, where the same
+  four volumes as the hit-time chart spike at different amounts purely because a busier day banks
+  more before it drops, then laid out hour by hour across all twelve volumes with mean, median, P10
+  and P90 underneath. The chart follows the same stake buttons as the hit-time chart. Copies
+  straight into Excel.
 - **The odds table** — every interval with its odds, per-interval hit chance and cumulative
   probability. Editable, downloadable as CSV, and resettable to the shipped table with one click.
 
