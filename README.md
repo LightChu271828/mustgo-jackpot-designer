@@ -36,6 +36,11 @@ The design stake and target share only feed **Rebuild**. The final window is a r
 whatever table is currently loaded, hand-edited or not. Contribution and seed never touch the odds
 at all; they only decide what the pool is worth when it drops.
 
+A rebuild re-baselines the page, so it also moves the explored volume to the new design stake:
+the charts land on the volume the fresh table was just solved for rather than staying on one that
+was chosen against the table being replaced. Typing a new design stake on its own does not move
+anything, since nothing is rebuilt until you press the button.
+
 The acceptance band is fixed at 65–85%, so it reads as a verdict rather than being a knob to move.
 A day is fine when its final-window share lands inside that range, too late above it and too early
 below it.
@@ -46,7 +51,9 @@ below it.
   preset daily volumes from $50K to $1M, overlaid against the design point and the two volumes
   where the share reaches 85% and 65%. Volume is the only thing that moves this curve: more stake
   burns through the odds faster and pulls the jackpot earlier in the day. Hover a preset to read
-  its share before switching.
+  its share before switching. It opens on the design point, so the first thing you see is the table
+  at the volume it was tuned for, reading its target share back exactly; the design reference line
+  sits on the bars until you pick another volume to compare against.
 - **Jackpot pot through the day** — how much is in the pot at each hour, for whichever volume the
   hit-time chart's stake buttons are set to. Contributions accrue evenly, so the line is straight
   and volume only changes its slope; hover any hour for the exact figure. This is the amount on

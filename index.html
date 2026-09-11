@@ -367,11 +367,13 @@
 
 const DEFAULTS = {
   stake: 500000, share: 80, hours: 4,
-  // Opens one preset above the design point, so the chart shows a comparison rather than two
-  // identical curves. 600K is exactly 1.20x design, the same ratio the page shipped with before.
-  exploreStake: 600000,
   contrib: 3, seed: 1000,
 };
+// The explored volume opens on the design point, so the first thing shown is the table at exactly
+// the volume it was tuned for. Derived rather than written out again, so the two cannot drift.
+// In the hit-time chart this puts the design reference line on top of the explored bars until
+// another preset is picked, which is the correct reading of a 1.00x view.
+DEFAULTS.exploreStake = DEFAULTS.stake;
 
 /**
  * Held constant rather than exposed. The first three only ever shaped the generated table, and the
@@ -1211,6 +1213,11 @@ function init() {
       intervals: FIXED.intervals, window: win, targetShare,
       designStake: state.stake, dumpShare: FIXED.dumpShare, earlyRamp: FIXED.earlyRamp,
     });
+    // A rebuild re-baselines the whole page, so the explored volume follows the new design point
+    // rather than leaving the charts on a volume that was chosen against the old table. A design
+    // stake with no matching preset simply leaves the button row unhighlighted; the value is still
+    // named above it.
+    state.exploreStake = state.stake;
     render();
     toast("Table rebuilt at " + money(state.stake) + " for " + state.share + "%");
   });
