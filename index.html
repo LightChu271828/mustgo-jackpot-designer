@@ -273,10 +273,10 @@
 
   <h2>Jackpot pot through the day</h2>
   <p>
-    How much is actually in the pot at each hour, one line per daily volume. Contributions accrue
-    evenly, so every line is straight and the only thing that changes is its slope. This is the
-    amount on offer, not the amount likely to be won &mdash; how likely each hour is comes from
-    the chart above.
+    How much is actually in the pot at each hour, for whichever volume the stake buttons above are
+    set to. Contributions accrue evenly, so the line is straight and volume only changes its slope.
+    Hover it to read any hour exactly. This is the amount on offer, not the amount likely to be won
+    &mdash; how likely each hour is comes from the chart above.
   </p>
   <div class="panel">
     <div class="panel-h"><span>Pot at the end of each hour</span><span id="potNote"></span></div>
@@ -573,6 +573,8 @@ const CLR = () => {
   const s = getComputedStyle(document.body);
   return {
     line: s.getPropertyValue("--line").trim(),
+    bg: s.getPropertyValue("--bg").trim(),
+    inset: s.getPropertyValue("--bg-inset").trim(),
     text: s.getPropertyValue("--text-dim").trim(),
     faint: s.getPropertyValue("--text-faint").trim(),
     accent: s.getPropertyValue("--accent").trim(),
@@ -581,18 +583,6 @@ const CLR = () => {
     bad: s.getPropertyValue("--bad").trim(),
   };
 };
-
-/**
- * Sequential colour for a set of ordered lines. Volumes never cross, so stepping the hue with the
- * order turns the legend into a gradient that can be read straight off the fan: warm is busy, cool
- * is quiet. Index 0 is the busiest, matching the column order of the tables.
- */
-function rampColor(i, n) {
-  const t = n <= 1 ? 0 : i / (n - 1);
-  const dark = matchMedia("(prefers-color-scheme: dark)").matches;
-  return "hsl(" + Math.round(45 + 165 * t) + " 72% " +
-    Math.round(dark ? 58 + 10 * t : 50 - 6 * t) + "%)";
-}
 
 const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
@@ -669,7 +659,56 @@ function plot(host, opts) {
   g += `<text x="${P.l + iw / 2}" y="${H - 3}" text-anchor="middle" font-size="10.5" fill="${c.text}">${esc(opts.xLabel || "")}</text>`;
   g += `<text x="12" y="${P.t + ih / 2}" text-anchor="middle" font-size="10.5" fill="${c.text}" transform="rotate(-90 12 ${P.t + ih / 2})">${esc(opts.yLabel || "")}</text>`;
 
+  // `hover` turns on a readout that follows the cursor. Everything lives in SVG user space, so it
+  // needs no conversion from the viewBox to whatever width the chart is actually rendered at.
+  if (opts.hover) {
+    g += `<g class="hv" style="display:none" pointer-events="none">` +
+      `<line class="hv-guide" y1="${P.t}" y2="${P.t + ih}" stroke="${c.text}" stroke-width="1" stroke-dasharray="3 3" opacity="0.75"/>` +
+      `<circle class="hv-dot" r="3.8" fill="${opts.series[0].color}" stroke="${c.bg}" stroke-width="1.5"/>` +
+      `<rect class="hv-box" rx="3" fill="${c.inset}" stroke="${c.line}"/>` +
+      `<text class="hv-text" font-size="11" font-weight="600" fill="${c.text}"></text>` +
+      `</g>`;
+    // Transparent columns, so the whole plot height is hoverable rather than just the 1.8px line.
+    for (let i = 0; i < n; i++) {
+      g += `<rect class="hv-hit" data-i="${i}" x="${(P.l + (i * iw) / n).toFixed(1)}" y="${P.t}" ` +
+        `width="${(iw / n).toFixed(1)}" height="${ih}" fill="transparent"/>`;
+    }
+  }
+
   host.innerHTML = `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(opts.yLabel || "")} by ${esc(opts.xLabel || "")}">${g}</svg>`;
+
+  if (!opts.hover) return;
+  const svg = host.firstChild;
+  const hv = svg.querySelector(".hv");
+  const guide = svg.querySelector(".hv-guide");
+  const dot = svg.querySelector(".hv-dot");
+  const box = svg.querySelector(".hv-box");
+  const label = svg.querySelector(".hv-text");
+  const show = (i) => {
+    const v = opts.series[0].data[i];
+    if (!Number.isFinite(v)) { hv.style.display = "none"; return; }
+    const px = x(i), py = y(v);
+    guide.setAttribute("x1", px);
+    guide.setAttribute("x2", px);
+    dot.setAttribute("cx", px);
+    dot.setAttribute("cy", py);
+    label.textContent = opts.hover(opts.categories[i], v);
+    hv.style.display = "";
+    // Measure once visible, then clamp so the box cannot hang off either edge of the plot.
+    const bw = label.getBBox().width + 14, bh = 19;
+    const bx = Math.min(W - P.r - bw, Math.max(P.l, px - bw / 2));
+    const by = Math.max(P.t, py - bh - 9);
+    box.setAttribute("x", bx);
+    box.setAttribute("y", by);
+    box.setAttribute("width", bw);
+    box.setAttribute("height", bh);
+    label.setAttribute("x", bx + 7);
+    label.setAttribute("y", by + 13.5);
+  };
+  svg.querySelectorAll(".hv-hit").forEach((r) => {
+    r.addEventListener("mouseenter", () => show(Number(r.dataset.i)));
+  });
+  svg.addEventListener("mouseleave", () => { hv.style.display = "none"; });
 }
 
 function legend(host, items) {
@@ -963,26 +1002,20 @@ function render({ keepTable = false } = {}) {
     " of stake.</b>";
 
   $("poolStats").innerHTML = [
-    { v: money(dayEnd), l: "Pool at midnight, if it lasts" },
-    { v: money(meanPool), l: "Expected payout" },
-    { v: money(medPool), l: "Median payout" },
-    { v: (earlyDrop * 100).toFixed(2) + "%", l: "Drops before the seed is covered",
-      cls: earlyDrop > 0.05 ? "bad" : earlyDrop > 0.01 ? "warn" : "ok" },
-    { v: (netPerDrop >= 0 ? "+" : "\u2212") + money(Math.abs(netPerDrop)), l: "Margin per drop",
-      cls: netPerDrop < 0 ? "bad" : "ok" },
-    { v: breakEven ? money(breakEven) : "\u2014", l: "Break-even daily stake",
-      cls: breakEven && breakEven > state.stake ? "bad" : "ok" },
+    { v: money(dayEnd), l: "Max JP payout" },
+    { v: money(meanPool), l: "Avg JP payout" },
+    { v: money(medPool), l: "Median JP payout" },
   ].map((s) => `<div class="stat"><div class="v ${s.cls || ""}">${esc(s.v)}</div><div class="l">${esc(s.l)}</div></div>`).join("");
 
-  // The pot drawn straight from the table below: same volumes, same hours, one line each. Every
-  // line is straight because contributions accrue evenly, so the chart is really about the fan -
-  // how far apart a quiet and a busy day are at the same point in the day.
+  // The pot drawn straight from the table below, for whichever volume the stake buttons above are
+  // on. The line is straight because contributions accrue evenly, so the only thing a reader wants
+  // off it is a specific hour's figure - hence the hover readout rather than more series.
   const hourEnd = (h) => Math.round((h + 1) * intervals / 24) - 1;
-  const potSeries = aggCols.map((s, i) => ({
-    name: (s >= 1e6 ? "$" + s / 1e6 + "M" : "$" + s / 1000 + "K") + (isDesign(s) ? " \u00b7 design" : ""),
-    data: Array.from({ length: 24 }, (_, h) => pool(hourEnd(h), s)),
-    color: rampColor(i, aggCols.length),
-  }));
+  const potSeries = [{
+    name: money(exploreStake) + "/day",
+    data: Array.from({ length: 24 }, (_, h) => pool(hourEnd(h), exploreStake)),
+    color: c.ok,
+  }];
   legend($("potLegend"), potSeries);
   plot($("potChart"), {
     categories: Array.from({ length: 24 }, (_, h) => String(h).padStart(2, "0")),
@@ -992,14 +1025,15 @@ function render({ keepTable = false } = {}) {
     yFmt: shortMoney,
     height: 280,
     xTicks: 24,
+    hover: (hour, v) => hour + ":59  \u00b7  " + money(v),
   });
   $("potNote").textContent = "seed " + money(seed) + " + " + state.contrib + "% of stake";
   $("potCap").textContent =
-    "Each point is the pot at the end of that hour, so the last point is what a day pays if the " +
-    "jackpot survives to midnight. Warm lines are busy days, cool lines quiet ones. Every line " +
-    "starts at the " + money(seed) + " seed and rises by " + state.contrib +
-    "% of whatever is staked, so the gap between the top and bottom line is entirely a volume " +
-    "effect \u2014 the odds table is identical for all of them.";
+    "Hover any hour to read the exact figure. Each point is the pot at the end of that hour, so " +
+    "the last one is what the day pays if the jackpot survives to midnight. The line starts at " +
+    "the " + money(seed) + " seed and rises by " + state.contrib + "% of every dollar staked, " +
+    "which is why it is straight. Use the stake buttons above to switch volume \u2014 the odds " +
+    "table does not change, only how fast the pot fills.";
 
   // Same grid as the hourly table above - busiest first, design column highlighted - so the two
   // can be read together: that one gives the odds of each hour, this one gives the money.
@@ -1036,8 +1070,8 @@ function render({ keepTable = false } = {}) {
     "more a busy day has banked by the same hour. How likely each hour is sits in the table " +
     "above; this one is only about the money.";
 
-  // The pool only self-funds above a certain volume: a drop leaves behind whatever was contributed
-  // after it, and that remainder has to pay for the next seed.
+  // Only surfaced when something is actually wrong. When the pool funds itself there is nothing
+  // to say, so the healthy case stays silent rather than reporting a number nobody asked for.
   const poolWarn = [];
   if (netPerDrop < 0) {
     poolWarn.push('<div class="note bad"><b>The pool loses ' + money(-netPerDrop) +
@@ -1046,11 +1080,6 @@ function render({ keepTable = false } = {}) {
       (breakEven ? money(breakEven) : "a much higher volume") + ' a day, so either lift the ' +
       'contribution to ' + fmt(100 * rate * seed / (seed + netPerDrop), 2) +
       '%, cut the seed to ' + money(Math.max(0, seed + netPerDrop)) + ', or budget the gap.</div>');
-  } else if (breakEven) {
-    poolWarn.push('<div class="note"><b>The pool self-funds above ' + money(breakEven) +
-      ' a day.</b> At the ' + money(state.stake) + ' design point it clears that by ' +
-      money(state.stake - breakEven) + ', leaving ' + money(netPerDrop) +
-      ' per drop towards the next seed. Quiet days below the line run at a loss.</div>');
   }
   if (earlyDrop > 0.01) {
     poolWarn.push('<div class="note warn"><b>' + (earlyDrop * 100).toFixed(1) +

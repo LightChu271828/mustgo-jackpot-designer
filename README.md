@@ -47,9 +47,9 @@ below it.
   where the share reaches 85% and 65%. Volume is the only thing that moves this curve: more stake
   burns through the odds faster and pulls the jackpot earlier in the day. Hover a preset to read
   its share before switching.
-- **Jackpot pot through the day** — how much is in the pot at each hour, one line per volume.
-  Contributions accrue evenly, so every line is straight and only the slope changes; the lines
-  never cross, so a sequential warm-to-cool ramp doubles as the volume axis. This is the amount on
+- **Jackpot pot through the day** — how much is in the pot at each hour, for whichever volume the
+  hit-time chart's stake buttons are set to. Contributions accrue evenly, so the line is straight
+  and volume only changes its slope; hover any hour for the exact figure. This is the amount on
   offer, not the amount likely to be won. Note that the fixed seed compresses the low end: at 3%
   and a $1,000 seed, $1M a day reaches $31,000 by midnight and $50K a day only $2,500, a 12.4x
   spread from a 20x difference in stake.
@@ -91,5 +91,7 @@ A drop never takes the whole day's contributions, only what was banked by the ti
 comes in after the drop is what pays for the next seed, which gives a break-even volume: below it
 the pool costs more to seed than it earns, above it the seed funds itself. At 3% and a $1,000 seed
 that line sits near $327K a day, so the shipped $500K design point clears it by a comfortable
-margin but a $150K day does not — it runs about $737 short per drop. The page computes the line for
-whatever contribution and seed you enter and says so plainly when the configuration is underwater.
+margin but a $150K day does not — it runs about $737 short per drop. The page computes this line for
+whatever contribution and seed you enter, but only speaks up when the configuration is actually
+underwater: it then names the break-even volume and what to change. A pool that funds itself says
+nothing, because the headline figures are the payouts, not the funding arithmetic behind them.
