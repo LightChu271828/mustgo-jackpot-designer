@@ -271,6 +271,22 @@
     </div>
   </div>
 
+  <h2>Jackpot pot through the day</h2>
+  <p>
+    How much is actually in the pot at each hour, one line per daily volume. Contributions accrue
+    evenly, so every line is straight and the only thing that changes is its slope. This is the
+    amount on offer, not the amount likely to be won &mdash; how likely each hour is comes from
+    the chart above.
+  </p>
+  <div class="panel">
+    <div class="panel-h"><span>Pot at the end of each hour</span><span id="potNote"></span></div>
+    <div class="panel-b">
+      <div class="legend" id="potLegend"></div>
+      <div id="potChart"></div>
+      <div class="cap" id="potCap"></div>
+    </div>
+  </div>
+
   <h2>Hourly distribution by daily stake</h2>
   <p>
     The same curve read as numbers, with every preset volume side by side. Each column is one daily
@@ -297,16 +313,6 @@
     hit-time curve read on a money axis rather than a new piece of maths.
   </p>
   <div class="stats" id="poolStats" style="margin-bottom:16px"></div>
-  <div class="panel" style="margin-bottom:12px">
-    <div class="panel-h">
-      <span>Probability the jackpot is won for each amount</span><span id="amtChartNote"></span>
-    </div>
-    <div class="panel-b">
-      <div class="legend" id="amtLegend"></div>
-      <div id="amtChart"></div>
-      <div class="cap" id="amtChartCap"></div>
-    </div>
-  </div>
   <div class="panel">
     <div class="panel-h">
       <span id="amtNote"></span>
@@ -575,6 +581,18 @@ const CLR = () => {
     bad: s.getPropertyValue("--bad").trim(),
   };
 };
+
+/**
+ * Sequential colour for a set of ordered lines. Volumes never cross, so stepping the hue with the
+ * order turns the legend into a gradient that can be read straight off the fan: warm is busy, cool
+ * is quiet. Index 0 is the busiest, matching the column order of the tables.
+ */
+function rampColor(i, n) {
+  const t = n <= 1 ? 0 : i / (n - 1);
+  const dark = matchMedia("(prefers-color-scheme: dark)").matches;
+  return "hsl(" + Math.round(45 + 165 * t) + " 72% " +
+    Math.round(dark ? 58 + 10 * t : 50 - 6 * t) + "%)";
+}
 
 const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
@@ -956,48 +974,32 @@ function render({ keepTable = false } = {}) {
       cls: breakEven && breakEven > state.stake ? "bad" : "ok" },
   ].map((s) => `<div class="stat"><div class="v ${s.cls || ""}">${esc(s.v)}</div><div class="l">${esc(s.l)}</div></div>`).join("");
 
-  // The same four volumes as the hit-time chart, driven by the same buttons, but plotted on a
-  // shared money axis instead of a clock. Each volume runs the identical odds table, so the
-  // spikes land in different places purely because a busy day banks more before it drops.
-  const amtVolumes = [
-    { name: "Explored \u2014 " + money(exploreStake) + "/day", stake: exploreStake, color: c.ok, bars: true },
-    { name: "Design \u2014 " + money(state.stake) + "/day", stake: state.stake, color: c.text, dash: "4 3" },
-  ];
-  if (bandOK) {
-    amtVolumes.push(
-      { name: "Quiet edge \u2014 " + money(bandLoStake), stake: bandLoStake, color: c.warn },
-      { name: "Busy edge \u2014 " + money(bandHiStake), stake: bandHiStake, color: c.bad }
-    );
-  }
-  const AMT_BUCKETS = 24;
-  const amtStep = Math.max(...amtVolumes.map((v) => pool(intervals - 1, v.stake))) / AMT_BUCKETS;
-  /** Probability mass landing in each money bucket, for one daily volume. */
-  const moneyBucket = (stake) => {
-    const out = new Array(AMT_BUCKETS).fill(0);
-    const d = distribution(LEVELS, stake);
-    for (let i = 0; i < d.length; i++) {
-      out[Math.min(AMT_BUCKETS - 1, Math.floor(pool(i, stake) / amtStep))] += d[i] * 100;
-    }
-    return out;
-  };
-  const amtSeries = amtVolumes.map((v) => ({ ...v, data: moneyBucket(v.stake) }));
-  legend($("amtLegend"), amtSeries);
-  plot($("amtChart"), {
-    categories: Array.from({ length: AMT_BUCKETS }, (_, b) => shortMoney((b + 1) * amtStep)),
-    series: amtSeries,
-    xLabel: "Jackpot amount won",
-    yLabel: "Hit probability (%)",
-    yFmt: (v) => v.toFixed(0) + "%",
-    height: 260,
-    xTicks: 12,
+  // The pot drawn straight from the table below: same volumes, same hours, one line each. Every
+  // line is straight because contributions accrue evenly, so the chart is really about the fan -
+  // how far apart a quiet and a busy day are at the same point in the day.
+  const hourEnd = (h) => Math.round((h + 1) * intervals / 24) - 1;
+  const potSeries = aggCols.map((s, i) => ({
+    name: (s >= 1e6 ? "$" + s / 1e6 + "M" : "$" + s / 1000 + "K") + (isDesign(s) ? " \u00b7 design" : ""),
+    data: Array.from({ length: 24 }, (_, h) => pool(hourEnd(h), s)),
+    color: rampColor(i, aggCols.length),
+  }));
+  legend($("potLegend"), potSeries);
+  plot($("potChart"), {
+    categories: Array.from({ length: 24 }, (_, h) => String(h).padStart(2, "0")),
+    series: potSeries,
+    xLabel: "Hour of day",
+    yLabel: "Pot on offer",
+    yFmt: shortMoney,
+    height: 280,
+    xTicks: 24,
   });
-  $("amtChartNote").textContent = "follows the stake buttons above";
-  $("amtChartCap").textContent =
-    "Bars are the stake you are exploring; the dashed line is the design stake" +
-    (bandOK ? " and the two solid lines are the quiet and busy edges of the band" : "") +
-    ". Every volume runs the same odds table, so the curves differ only because a busier day " +
-    "banks more contributions before the jackpot drops. Each spike is narrow because most " +
-    "jackpots land in the closing hours, by which point the pool is nearly full.";
+  $("potNote").textContent = "seed " + money(seed) + " + " + state.contrib + "% of stake";
+  $("potCap").textContent =
+    "Each point is the pot at the end of that hour, so the last point is what a day pays if the " +
+    "jackpot survives to midnight. Warm lines are busy days, cool lines quiet ones. Every line " +
+    "starts at the " + money(seed) + " seed and rises by " + state.contrib +
+    "% of whatever is staked, so the gap between the top and bottom line is entirely a volume " +
+    "effect \u2014 the odds table is identical for all of them.";
 
   // Same grid as the hourly table above - busiest first, design column highlighted - so the two
   // can be read together: that one gives the odds of each hour, this one gives the money.

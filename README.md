@@ -47,16 +47,19 @@ below it.
   where the share reaches 85% and 65%. Volume is the only thing that moves this curve: more stake
   burns through the odds faster and pulls the jackpot earlier in the day. Hover a preset to read
   its share before switching.
+- **Jackpot pot through the day** — how much is in the pot at each hour, one line per volume.
+  Contributions accrue evenly, so every line is straight and only the slope changes; the lines
+  never cross, so a sequential warm-to-cool ramp doubles as the volume axis. This is the amount on
+  offer, not the amount likely to be won. Note that the fixed seed compresses the low end: at 3%
+  and a $1,000 seed, $1M a day reaches $31,000 by midnight and $50K a day only $2,500, a 12.4x
+  spread from a 20x difference in stake.
 - **Hourly distribution by daily stake** — the same curve as numbers, all twelve volumes side by
   side. Each column is one daily volume and sums to 100%, because the jackpot has to go before the
   day closes. Copies straight into Excel.
 - **Jackpot amount distribution** — what the pool is actually worth when it drops. The pool is the
   seed plus everything contributed so far, so it climbs linearly through the day and the amount won
-  is the hit-time curve read on a money axis. Plotted first on a shared money axis, where the same
-  four volumes as the hit-time chart spike at different amounts purely because a busier day banks
-  more before it drops, then laid out hour by hour across all twelve volumes with mean, median, P10
-  and P90 underneath. The chart follows the same stake buttons as the hit-time chart. Copies
-  straight into Excel.
+  is the hit-time curve read on a money axis. Laid out hour by hour across all twelve volumes, with
+  mean, median, P10 and P90 underneath. Copies straight into Excel.
 - **The odds table** — every interval with its odds, per-interval hit chance and cumulative
   probability. Editable, downloadable as CSV, and resettable to the shipped table with one click.
 
